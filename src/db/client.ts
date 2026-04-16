@@ -80,7 +80,9 @@ export function newId(): string {
 /**
  * Escape a user query string for FTS5 MATCH.
  * FTS5 has special operators: " ^ $ + - & | ( ) and treats quotes specially.
- * We wrap each token in double quotes and AND them together.
+ * We wrap each token in double quotes and OR them together so multi-word
+ * queries return results that match ANY token. bm25 ranking ensures documents
+ * matching more tokens score higher.
  */
 export function escapeFtsQuery(query: string): string {
   const tokens = query
@@ -89,5 +91,5 @@ export function escapeFtsQuery(query: string): string {
     .filter((t) => t.length > 0)
     .map((t) => `"${t.replace(/"/g, '""')}"`);
   if (tokens.length === 0) return '""';
-  return tokens.join(' AND ');
+  return tokens.join(' OR ');
 }
