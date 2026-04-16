@@ -1,0 +1,62 @@
+{
+  "name": "local-memory-mcp",
+  "version": "1.0.0",
+  "description": "Persistent local memory for any MCP client. SQLite, FTS5, Knowledge Graph. No cloud, no API keys.",
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "local-memory-mcp": "./dist/server.js"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "memory",
+    "local-first",
+    "sqlite",
+    "knowledge-graph",
+    "claude",
+    "cursor",
+    "codex",
+    "continue",
+    "ai-memory",
+    "persistent-memory",
+    "model-context-protocol"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/studiomeyer-io/local-memory-mcp"
+  },
+  "homepage": "https://github.com/studiomeyer-io/local-memory-mcp#readme",
+  "author": {
+    "name": "StudioMeyer",
+    "email": "hello@studiomeyer.io",
+    "url": "https://studiomeyer.io"
+  },
+  "scripts": {
+    "build": "tsc && cp src/db/schema.sql dist/db/schema.sql",
+    "dev": "tsx src/server.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^11.7.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
