@@ -1,0 +1,57 @@
+{
+  "manifest_version": "0.2",
+  "name": "local-memory",
+  "display_name": "Local Memory",
+  "version": "1.0.1",
+  "description": "Persistent local memory for Claude. 100% local, SQLite-based, zero API keys. Your data never leaves your machine.",
+  "long_description": "Local Memory gives Claude a persistent memory across conversations. Sessions, learnings, decisions, and a knowledge graph -- all stored in a single SQLite file on your machine. No cloud, no account, no telemetry. Install with a double-click. 13 tools covering session tracking, learning storage with duplicate guard, full-text search via FTS5, decision logging, and a bi-temporal entity knowledge graph.",
+  "author": {
+    "name": "StudioMeyer",
+    "email": "hello@studiomeyer.io",
+    "url": "https://studiomeyer.io"
+  },
+  "homepage": "https://github.com/studiomeyer-io/local-memory-mcp",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "local-first",
+    "privacy",
+    "sqlite",
+    "knowledge-graph",
+    "claude",
+    "mcp"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/dist/server.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/dist/server.js"
+      ],
+      "env": {}
+    }
+  },
+  "tools": [
+    { "name": "memory_session_start", "description": "Start a session and load previous context" },
+    { "name": "memory_session_end", "description": "End the current session with a summary" },
+    { "name": "memory_learn", "description": "Store a learning with duplicate detection" },
+    { "name": "memory_recall", "description": "Quick recall of learnings" },
+    { "name": "memory_search", "description": "Unified FTS5 search across everything" },
+    { "name": "memory_decide", "description": "Log a decision with reasoning" },
+    { "name": "memory_entity_observe", "description": "Record a fact about an entity (auto-creates)" },
+    { "name": "memory_entity_search", "description": "Fuzzy search the knowledge graph" },
+    { "name": "memory_entity_open", "description": "Load entity with observations and relations" },
+    { "name": "memory_entity_relate", "description": "Create a typed relation between entities" },
+    { "name": "memory_insights", "description": "Memory stats and reflection" },
+    { "name": "memory_profile", "description": "Read or write a user profile field" },
+    { "name": "memory_guide", "description": "On-demand help for any topic" }
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

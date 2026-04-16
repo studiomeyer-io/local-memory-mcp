@@ -4,3 +4,5 @@ dist/
 *.sqlite-wal
 *.sqlite-shm
 .DS_Store
+mcpb/build/
+*.mcpb
