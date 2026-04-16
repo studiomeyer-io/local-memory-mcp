@@ -1,5 +1,5 @@
 {
-  "name": "local-memory-mcp",
+  "name": "@studiomeyer/local-memory-mcp",
   "version": "1.0.0",
   "description": "Persistent local memory for any MCP client. SQLite, FTS5, Knowledge Graph. No cloud, no API keys.",
   "type": "module",
