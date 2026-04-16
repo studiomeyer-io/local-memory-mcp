@@ -41,7 +41,7 @@
     "url": "https://studiomeyer.io"
   },
   "scripts": {
-    "build": "tsc && cp src/db/schema.sql dist/db/schema.sql",
+    "build": "tsc && cp src/db/schema.sql dist/db/schema.sql && chmod +x dist/server.js",
     "dev": "tsx src/server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

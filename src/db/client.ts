@@ -86,7 +86,7 @@ export function escapeFtsQuery(query: string): string {
   const tokens = query
     .trim()
     .split(/\s+/)
-    .filter((t) => t.length >= 2)
+    .filter((t) => t.length > 0)
     .map((t) => `"${t.replace(/"/g, '""')}"`);
   if (tokens.length === 0) return '""';
   return tokens.join(' AND ');

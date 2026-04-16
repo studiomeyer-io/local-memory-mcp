@@ -125,7 +125,7 @@ export function entitySearch(input: z.infer<typeof entitySearchSchema>): ToolRes
       JOIN entities e ON (
         (search_fts.content_type = 'entity' AND search_fts.content_id = e.id) OR
         (search_fts.content_type = 'observation' AND search_fts.content_id IN
-          (SELECT id FROM entity_observations WHERE entity_id = e.id))
+          (SELECT id FROM entity_observations WHERE entity_id = e.id AND valid_to IS NULL))
       )
       WHERE search_fts MATCH ? ${typeFilter}
       GROUP BY e.id

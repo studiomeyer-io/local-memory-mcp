@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 // We must set MEMORY_DB_PATH BEFORE the modules that import the singleton db.
 let tmp = '';
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'memdesk-'));
+  tmp = mkdtempSync(join(tmpdir(), 'local-memory-'));
   process.env.MEMORY_DB_PATH = join(tmp, 'test.sqlite');
 });
 afterEach(async () => {

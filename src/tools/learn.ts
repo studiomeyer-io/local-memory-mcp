@@ -92,8 +92,10 @@ export function learn(input: z.infer<typeof learnSchema>): ToolResult {
         };
       }
     }
-  } catch {
+  } catch (err) {
     // FTS5 query parsing failed — not fatal, just skip the similarity check.
+    // Log for debugging but continue with insert.
+    process.stderr.write(`[local-memory] FTS5 similarity check failed: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 
   // Insert new
