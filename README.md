@@ -57,9 +57,37 @@ command = "npx"
 args = ["-y", "@studiomeyer/local-memory-mcp"]
 ```
 
+## Automatic session tracking
+
+You can make session tracking fully automatic so you never have to think about it.
+
+**Claude Code (CLAUDE.md):** Add this line to your project's `CLAUDE.md`:
+
+```
+Always call memory_session_start at the beginning of each conversation and memory_session_end when done.
+```
+
+**Claude Code (Hook):** For a system-wide setup, add a SessionStart hook in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "echo '{\"hookSpecificOutput\":{\"additionalContext\":\"Call memory_session_start now.\"}}'",
+        "timeout": 5
+      }]
+    }]
+  }
+}
+```
+
+Both approaches make Claude call `memory_session_start` automatically. The CLAUDE.md way is simpler, the hook way works across all projects.
+
 ## What it does
 
-When you start a conversation, call `memory_session_start`. The server loads context from your last sessions so the AI knows what you were working on.
+When you start a conversation, the server loads context from your last sessions so the AI knows what you were working on.
 
 During the conversation, the AI stores patterns, insights, and mistakes via `memory_learn`. It records facts about people, projects, and tools via `memory_entity_observe` -- building a knowledge graph over time.
 
