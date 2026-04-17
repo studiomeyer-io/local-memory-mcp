@@ -1,5 +1,5 @@
 {
-  "manifest_version": "0.2",
+  "manifest_version": "0.3",
   "name": "local-memory",
   "display_name": "Local Memory",
   "version": "1.0.2",
@@ -17,7 +17,7 @@
     "type": "binary",
     "entry_point": "server/local-memory",
     "mcp_config": {
-      "command": "${__dirname}/server/local-memory",
+      "command": "server/local-memory",
       "args": [],
       "env": {}
     }
