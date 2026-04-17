@@ -1,59 +1,48 @@
 # local-memory-mcp
 
-Persistent local memory for any MCP client. One command. No cloud. No API keys.
+**Persistent local memory for Claude, Cursor & Codex. 13 tools. No cloud. No API keys.**
 
-Works with **Claude Desktop**, **Claude Code**, **Cursor**, **Codex**, **Continue**, and any MCP-compatible client.
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/@studiomeyer/local-memory-mcp)](https://www.npmjs.com/package/@studiomeyer/local-memory-mcp)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](tsconfig.json)
 
+Your AI assistant forgets everything when you close the chat. This fixes that.
+
+Learnings, decisions, people, projects -- stored in a **single SQLite file** on your machine that never leaves your computer. Built-in Knowledge Graph, duplicate detection, and full-text search.
+
+## Quick Start
+
+### Claude Code
+
+```bash
+claude mcp add memory -- npx -y @studiomeyer/local-memory-mcp
 ```
-npx local-memory-mcp
-```
-
-Your AI assistant remembers everything across conversations. Learnings, decisions, people, projects -- stored in a single SQLite file on your machine that never leaves your computer.
-
-## Why
-
-AI assistants forget everything when you close the chat. This fixes that.
-
-- **13 tools** for sessions, learnings, decisions, and a knowledge graph
-- **Duplicate guard** prevents storing the same thing twice
-- **FTS5 search** finds anything instantly, even with typos
-- **Knowledge Graph** with entities, bi-temporal observations, and relations
-- **Single SQLite file** you can back up, copy, or delete at any time
-- **Zero dependencies** beyond Node.js -- no Docker, no Postgres, no Redis
-
-## Install
 
 ### Claude Desktop
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+Add to `claude_desktop_config.json` ([Settings > Developer > Edit Config](https://modelcontextprotocol.io/quickstart/user)):
 
 ```json
 {
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "local-memory-mcp"]
+      "args": ["-y", "@studiomeyer/local-memory-mcp"]
     }
   }
 }
 ```
 
-### Claude Code
+### Cursor / VS Code
 
-```bash
-claude mcp add memory -- npx -y local-memory-mcp
-```
-
-### Cursor
-
-Add to `.cursor/mcp.json` in your project:
+Add to `.cursor/mcp.json` or `.vscode/mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "local-memory-mcp"]
+      "args": ["-y", "@studiomeyer/local-memory-mcp"]
     }
   }
 }
@@ -61,24 +50,20 @@ Add to `.cursor/mcp.json` in your project:
 
 ### Codex
 
-Add to `~/.codex/config.toml`:
-
 ```toml
+# ~/.codex/config.toml
 [mcp_servers.memory]
 command = "npx"
-args = ["-y", "local-memory-mcp"]
+args = ["-y", "@studiomeyer/local-memory-mcp"]
 ```
 
-### Continue
+## What it does
 
-Add to `~/.continue/config.yaml`:
+When you start a conversation, call `memory_session_start`. The server loads context from your last sessions so the AI knows what you were working on.
 
-```yaml
-mcpServers:
-  - name: memory
-    command: npx
-    args: ["-y", "local-memory-mcp"]
-```
+During the conversation, the AI stores patterns, insights, and mistakes via `memory_learn`. It records facts about people, projects, and tools via `memory_entity_observe` -- building a knowledge graph over time.
+
+When you search, FTS5 full-text search with bm25 ranking finds relevant memories instantly. The duplicate gatekeeper prevents storing the same information twice.
 
 ## Tools (13)
 
@@ -96,17 +81,21 @@ mcpServers:
 | `memory_entity_relate` | Create typed relations between entities |
 | `memory_insights` | Stats: days of memory, counts, breakdowns |
 | `memory_profile` | Store your name, role, preferences locally |
-| `memory_guide` | Built-in help per topic |
+| `memory_guide` | Built-in help (topics: quickstart, session, search, entities, learn, privacy) |
 
-## How it works
+## Features
 
-When you start a conversation, call `memory_session_start`. The server loads context from your last 3 sessions so the AI knows what you were working on.
+- **Knowledge Graph** -- not just flat text. Entities, bi-temporal observations, typed relations.
+- **Duplicate Guard** -- FTS5 similarity check prevents storing the same thing twice. Usage counter instead.
+- **Session Context** -- auto-loads last 3 sessions on start. Your AI picks up where you left off.
+- **Decision Tracking** -- log decisions with reasoning and alternatives. Unique among memory servers.
+- **Full-Text Search** -- FTS5 with bm25 ranking across learnings, decisions, entities, observations.
+- **Single SQLite File** -- one file, portable, backupable, deletable. WAL mode for concurrent access.
+- **Zero Config** -- `npx` and done. No Docker, no Postgres, no Redis, no API keys.
 
-During the conversation, the AI calls `memory_learn` to store patterns, insights, and mistakes. It calls `memory_entity_observe` to record facts about people, projects, and tools -- building a knowledge graph over time.
+## Where your data lives
 
-When you search, FTS5 full-text search with bm25 ranking finds relevant memories instantly. The duplicate gatekeeper prevents storing the same information twice.
-
-Everything is stored in a single SQLite file:
+Everything in one SQLite file. Back it up, move it, delete it -- it's yours.
 
 | OS | Path |
 |----|------|
@@ -114,37 +103,52 @@ Everything is stored in a single SQLite file:
 | Linux | `~/.local/share/local-memory-mcp/memory.sqlite` |
 | Windows | `%APPDATA%\local-memory-mcp\memory.sqlite` |
 
-Override with `MEMORY_DB_PATH=/your/path.sqlite`.
+Override: `MEMORY_DB_PATH=/your/preferred/path.sqlite`
 
 ## Privacy
 
 - Your data **never** leaves your machine
 - No telemetry, no phone-home, no analytics
 - No account required, no API keys needed
-- The SQLite file is yours -- back it up, move it, delete it
+- Open source -- read every line of code
 
-## vs. Other Memory Solutions
+## Comparison
 
-| Feature | local-memory-mcp | MemPalace | Mem0 | Zep |
-|---------|-----------------|-----------|------|-----|
-| Local-first | Yes | Yes | No (cloud) | No (cloud) |
-| Knowledge Graph | Yes (entities + relations) | No | Paid tier | No |
-| Duplicate Guard | Yes (FTS5 similarity) | No | Unknown | Unknown |
-| Decision Tracking | Yes | No | No | No |
-| Session Context | Yes (auto-load) | No | No | No |
-| Language | TypeScript (npm) | Python (pip) | Python | Python |
-| Storage | SQLite + FTS5 | JSON files | Cloud DB | Cloud DB |
-| Install | `npx` (one command) | `pip install` | Sign up | Sign up |
-| Price | Free forever | Free | $0-249/mo | $0-499/mo |
+| Feature | local-memory-mcp | Official MCP Memory | MemPalace | Mem0 | Zep |
+|---------|-----------------|---------------------|-----------|------|-----|
+| Local-first | Yes | Yes | Yes | No (cloud) | No (cloud) |
+| Knowledge Graph | Yes (entities + relations) | Yes (triples) | No | Paid tier | No |
+| Duplicate Guard | Yes (FTS5 similarity) | No | No | Unknown | Unknown |
+| Decision Tracking | Yes | No | No | No | No |
+| Session Context | Yes (auto-load) | No | No | No | No |
+| Full-Text Search | FTS5 + bm25 | No | No (vector only) | Vector | Vector |
+| Tools | 13 | 5 | 29 | API | API |
+| Language | TypeScript | TypeScript | Python | Python | Python |
+| Storage | SQLite | JSON file | ChromaDB | Cloud | Cloud |
+| Install | `npx` | `npx` | `pip` + venv | Sign up | Sign up |
+| Price | Free forever | Free | Free | $0-249/mo | $0-499/mo |
 
 ## Need team features?
 
 This is a single-user local memory. For teams, multi-device sync, semantic search with embeddings, and 53+ tools, check out [StudioMeyer Memory](https://memory.studiomeyer.io) -- the hosted version with the same DNA.
 
+## Also by StudioMeyer
+
+| Server | What it does | Link |
+|--------|-------------|------|
+| **StudioMeyer Memory** | Hosted AI memory with 53 tools, semantic search, multi-agent | [memory.studiomeyer.io](https://memory.studiomeyer.io) |
+| **StudioMeyer CRM** | AI-native CRM -- 33 tools, pipeline, leads, revenue | [crm.studiomeyer.io](https://crm.studiomeyer.io) |
+| **StudioMeyer GEO** | AI visibility monitoring -- 23 tools, 8 LLM platforms | [geo.studiomeyer.io](https://geo.studiomeyer.io) |
+| **MCP Crew** | Agent personas for Claude -- 10 tools, 8 roles, 3 workflows | [crew.studiomeyer.io](https://crew.studiomeyer.io) |
+
 ## Contributing
 
-Issues and PRs welcome. MIT licensed.
+Issues and PRs welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)
+
+---
+
+Built by [StudioMeyer](https://studiomeyer.io) -- AI-first web studio from Mallorca.
