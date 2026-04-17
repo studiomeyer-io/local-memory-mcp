@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "local-memory",
   "display_name": "Local Memory",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Persistent local memory for Claude. 100% local, SQLite-based, zero API keys. Your data never leaves your machine.",
   "long_description": "Local Memory gives Claude a persistent memory across conversations. Sessions, learnings, decisions, and a knowledge graph -- all stored in a single SQLite file on your machine. No cloud, no account, no telemetry. Install with a double-click. 13 tools covering session tracking, learning storage with duplicate guard, full-text search via FTS5, decision logging, and a bi-temporal entity knowledge graph.",
   "author": {
@@ -12,23 +12,13 @@
   },
   "homepage": "https://github.com/studiomeyer-io/local-memory-mcp",
   "license": "MIT",
-  "keywords": [
-    "memory",
-    "local-first",
-    "privacy",
-    "sqlite",
-    "knowledge-graph",
-    "claude",
-    "mcp"
-  ],
+  "keywords": ["memory", "local-first", "privacy", "sqlite", "knowledge-graph", "claude", "mcp"],
   "server": {
-    "type": "node",
-    "entry_point": "server/dist/server.js",
+    "type": "binary",
+    "entry_point": "server/local-memory",
     "mcp_config": {
-      "command": "node",
-      "args": [
-        "${__dirname}/server/dist/server.js"
-      ],
+      "command": "${__dirname}/server/local-memory",
+      "args": [],
       "env": {}
     }
   },
@@ -48,10 +38,6 @@
     { "name": "memory_guide", "description": "On-demand help for any topic" }
   ],
   "compatibility": {
-    "claude_desktop": ">=0.10.0",
-    "platforms": ["darwin", "win32", "linux"],
-    "runtimes": {
-      "node": ">=18.0.0"
-    }
+    "platforms": ["darwin", "win32", "linux"]
   }
 }

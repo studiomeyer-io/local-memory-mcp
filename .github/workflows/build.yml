@@ -53,39 +53,9 @@ jobs:
           # Restore original client for git cleanliness
           git checkout src/db/client.ts
 
-      - name: Write manifest
+      - name: Copy manifest
         shell: bash
-        run: |
-          cat > mcpb/build/manifest.json <<'EOF'
-          {
-            "manifest_version": "0.2",
-            "name": "local-memory",
-            "display_name": "Local Memory",
-            "version": "1.0.1",
-            "description": "Persistent local memory for Claude. 100% local, SQLite-based, zero API keys.",
-            "long_description": "Local Memory gives Claude a persistent memory across conversations. Sessions, learnings, decisions, and a knowledge graph -- all stored in a single SQLite file on your machine. No cloud, no account, no telemetry. 13 tools.",
-            "author": { "name": "StudioMeyer", "email": "hello@studiomeyer.io", "url": "https://studiomeyer.io" },
-            "homepage": "https://github.com/studiomeyer-io/local-memory-mcp",
-            "license": "MIT",
-            "server": { "type": "binary", "entry_point": "server/local-memory" },
-            "tools": [
-              { "name": "memory_session_start", "description": "Start a session and load previous context" },
-              { "name": "memory_session_end", "description": "End the current session with a summary" },
-              { "name": "memory_learn", "description": "Store a learning with duplicate detection" },
-              { "name": "memory_recall", "description": "Quick recall of learnings" },
-              { "name": "memory_search", "description": "Unified FTS5 search across everything" },
-              { "name": "memory_decide", "description": "Log a decision with reasoning" },
-              { "name": "memory_entity_observe", "description": "Record a fact about an entity" },
-              { "name": "memory_entity_search", "description": "Fuzzy search the knowledge graph" },
-              { "name": "memory_entity_open", "description": "Load entity with observations and relations" },
-              { "name": "memory_entity_relate", "description": "Create a typed relation between entities" },
-              { "name": "memory_insights", "description": "Memory stats and reflection" },
-              { "name": "memory_profile", "description": "Read or write a user profile field" },
-              { "name": "memory_guide", "description": "On-demand help for any topic" }
-            ],
-            "compatibility": { "platforms": ["darwin", "win32", "linux"] }
-          }
-          EOF
+        run: cp mcpb/manifest.json mcpb/build/manifest.json
 
       - name: Pack .mcpb
         shell: bash
