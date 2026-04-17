@@ -13,6 +13,7 @@
   },
   "files": [
     "dist",
+    "dist/db/schema.sql",
     "README.md",
     "LICENSE"
   ],

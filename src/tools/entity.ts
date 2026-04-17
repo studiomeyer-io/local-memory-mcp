@@ -252,9 +252,11 @@ export const entityDeleteSchema = z.object({
 
 export function entityDelete(input: z.infer<typeof entityDeleteSchema>): ToolResult {
   const db = getDb();
-  const result = db.prepare('DELETE FROM entities WHERE id = ?').run(input.id);
-  if (result.changes === 0) {
+  // Check existence first (compatible with both better-sqlite3 and bun:sqlite)
+  const exists = db.prepare('SELECT id FROM entities WHERE id = ?').get(input.id);
+  if (!exists) {
     return { success: false, error: 'Entity not found.', code: 'NOT_FOUND' };
   }
+  db.prepare('DELETE FROM entities WHERE id = ?').run(input.id);
   return { success: true, data: { id: input.id }, message: 'Entity und zugehörige Daten gelöscht.' };
 }
