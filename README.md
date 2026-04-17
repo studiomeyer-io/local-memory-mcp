@@ -128,9 +128,22 @@ Override: `MEMORY_DB_PATH=/your/preferred/path.sqlite`
 | Install | `npx` | `npx` | `pip` + venv | Sign up | Sign up |
 | Price | Free forever | Free | Free | $0-249/mo | $0-499/mo |
 
-## Need team features?
+## local-memory-mcp vs. StudioMeyer Memory
 
-This is a single-user local memory. For teams, multi-device sync, semantic search with embeddings, and 53+ tools, check out [StudioMeyer Memory](https://memory.studiomeyer.io) -- the hosted version with the same DNA.
+Two products, same team, different use cases:
+
+| | **local-memory-mcp** (this repo) | **StudioMeyer Memory** (hosted) |
+|---|---|---|
+| Where | Your machine (SQLite) | Cloud (Supabase EU Frankfurt) |
+| Tools | 13 | 53 |
+| Search | FTS5 keyword | FTS5 + pgvector semantic + reranking |
+| Multi-device | No | Yes |
+| Multi-agent | No | Yes |
+| Price | Free forever | Free tier / $29 Pro / $49 Team |
+| Install | `npx` | [memory.studiomeyer.io](https://memory.studiomeyer.io) |
+| Repo | [local-memory-mcp](https://github.com/studiomeyer-io/local-memory-mcp) | [studiomeyer-memory](https://github.com/studiomeyer-io/studiomeyer-memory) (docs) |
+
+Start local. Upgrade when you need teams or semantic search.
 
 ## Also by StudioMeyer
 
