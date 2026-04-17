@@ -40,6 +40,9 @@ jobs:
       - name: Build standalone binary
         shell: bash
         run: |
+          # Install dependencies (MCP SDK, Zod)
+          bun install
+
           # Swap to bun:sqlite client
           cp src/db/client-bun.ts src/db/client.ts
 
