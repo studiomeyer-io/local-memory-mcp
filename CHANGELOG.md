@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.5 — 2026-04-21
+
+Resilience patch. No API changes.
+
+- **Set `PRAGMA busy_timeout = 5000`** on every SQLite open so concurrent MCP
+  clients (e.g. Claude Desktop + Claude Code sharing one memory file) wait
+  briefly for a locked writer instead of returning `SQLITE_BUSY` immediately.
+  Complements the existing `journal_mode = WAL` + `synchronous = NORMAL`
+  setup.
+
 ## 1.0.4 — 2026-04-21
 
 Bugfix release.
