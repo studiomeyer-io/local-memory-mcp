@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.6 — 2026-04-21
+
+Correctness + performance patch. No API changes.
+
+- **Fix: archived learnings no longer short-change the LIMIT** in `memory_search`.
+  Filter moved from an in-memory post-pass into the SQL join, so the returned
+  result set actually contains up to `limit` unarchived matches instead of
+  `limit` minus-however-many-happened-to-be-archived-at-the-top-of-the-rank.
+  Also avoids a second full scan of `learnings WHERE archived = 1` per call.
+
 ## 1.0.5 — 2026-04-21
 
 Resilience patch. No API changes.

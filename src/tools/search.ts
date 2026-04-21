@@ -26,14 +26,24 @@ export function search(input: z.infer<typeof searchSchema>): ToolResult {
         ? `AND search_fts.content_type IN (${input.types.map(() => '?').join(',')})`
         : '';
 
+    // Archived learnings are filtered at the SQL level via LEFT JOIN so the
+    // LIMIT applies to the post-filter set. The previous implementation
+    // pulled every match, fetched every archived-learning id separately, and
+    // filtered in memory — which broke LIMIT semantics whenever the top-N
+    // hits happened to all be archived (you'd get a result set shorter than
+    // the requested limit even if plenty of unarchived matches existed).
     const sql = `
-      SELECT content_id AS id,
-             content_type AS type,
-             title,
-             body,
+      SELECT search_fts.content_id AS id,
+             search_fts.content_type AS type,
+             search_fts.title,
+             search_fts.body,
              bm25(search_fts) AS rank
       FROM search_fts
-      WHERE search_fts MATCH ? ${typeFilter}
+      LEFT JOIN learnings l
+        ON search_fts.content_type = 'learning' AND l.id = search_fts.content_id
+      WHERE search_fts MATCH ?
+        AND (search_fts.content_type != 'learning' OR COALESCE(l.archived, 0) = 0)
+        ${typeFilter}
       ORDER BY rank
       LIMIT ?
     `;
@@ -50,22 +60,14 @@ export function search(input: z.infer<typeof searchSchema>): ToolResult {
       rank: number;
     }>;
 
-    // Strip archived learnings (FTS5 doesn't know about the archived flag)
-    const archivedIds = new Set(
-      (db
-        .prepare('SELECT id FROM learnings WHERE archived = 1')
-        .all() as Array<{ id: string }>).map((r) => r.id)
-    );
-    const filtered = rows.filter((r) => !(r.type === 'learning' && archivedIds.has(r.id)));
-
     return {
       success: true,
       data: {
         query: input.query,
-        results: filtered,
-        count: filtered.length,
+        results: rows,
+        count: rows.length,
       },
-      message: `${filtered.length} Ergebnisse für "${input.query}".`,
+      message: `${rows.length} Ergebnisse für "${input.query}".`,
     };
   } catch (err) {
     return {
