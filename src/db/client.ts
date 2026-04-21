@@ -46,6 +46,10 @@ export function getDb(): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
+  // 5s lock-wait protects us when multiple MCP clients (e.g. Claude Desktop +
+  // Claude Code sharing the same file) race on the same SQLite. Without this
+  // any SQLITE_BUSY short-circuits the request instead of waiting briefly.
+  db.pragma('busy_timeout = 5000');
 
   // Bootstrap schema — idempotent because of IF NOT EXISTS
   const schemaPath = join(__dirname, 'schema.sql');

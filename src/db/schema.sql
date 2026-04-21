@@ -158,6 +158,17 @@ END;
 CREATE TRIGGER IF NOT EXISTS obs_ad AFTER DELETE ON entity_observations BEGIN
   DELETE FROM search_fts WHERE content_id = old.id AND content_type = 'observation';
 END;
+-- Observation UPDATE trigger: refresh the FTS5 entry when content changes.
+-- Without this, editing an observation's content leaves a stale FTS row
+-- pointing at the old text — every future search would miss the new content
+-- until the row was deleted and re-inserted. We don't currently expose an
+-- "edit observation" path, but defence in depth: the trigger set stays
+-- symmetric with the learnings/decisions/entities tables.
+CREATE TRIGGER IF NOT EXISTS obs_au AFTER UPDATE ON entity_observations BEGIN
+  DELETE FROM search_fts WHERE content_id = old.id AND content_type = 'observation';
+  INSERT INTO search_fts(content_id, content_type, title, body)
+  VALUES (new.id, 'observation', (SELECT name FROM entities WHERE id = new.entity_id), new.content);
+END;
 
 -- Triggers for entities themselves (searchable by name + summary)
 CREATE TRIGGER IF NOT EXISTS entities_ai AFTER INSERT ON entities BEGIN

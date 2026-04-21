@@ -114,40 +114,66 @@ export function entitySearch(input: z.infer<typeof entitySearchSchema>): ToolRes
   const db = getDb();
   const limit = input.limit ?? 10;
 
-  // First try FTS5 across entity + observation text
+  // FTS5 restricts bm25() to the direct FTS-table context — we can't call it
+  // across a JOIN whose join condition uses OR to mix entity + observation
+  // rows (SQLite raises "unable to use function bm25 in the requested
+  // context"). Splitting into two MATCH-ed subqueries and UNION-ing by
+  // entity_id keeps bm25 valid for each leg. Both legs aggregate per entity
+  // via MIN(rank) so an entity hit and an observation hit on the same entity
+  // collapse to their best score.
   try {
     const fts = escapeFtsQuery(input.query);
     const typeFilter = input.entityType ? 'AND e.entity_type = ?' : '';
     const sql = `
-      SELECT DISTINCT e.id, e.name, e.entity_type, e.summary, e.updated_at,
-             MIN(bm25(search_fts)) AS rank
-      FROM search_fts
-      JOIN entities e ON (
-        (search_fts.content_type = 'entity' AND search_fts.content_id = e.id) OR
-        (search_fts.content_type = 'observation' AND search_fts.content_id IN
-          (SELECT id FROM entity_observations WHERE entity_id = e.id AND valid_to IS NULL))
-      )
-      WHERE search_fts MATCH ? ${typeFilter}
+      SELECT e.id, e.name, e.entity_type, e.summary, e.updated_at,
+             MIN(ranked.rank) AS rank
+      FROM (
+        SELECT e.id AS entity_id, bm25(search_fts) AS rank
+        FROM search_fts
+        JOIN entities e
+          ON search_fts.content_id = e.id
+         AND search_fts.content_type = 'entity'
+        WHERE search_fts MATCH ?
+        UNION ALL
+        SELECT obs.entity_id AS entity_id, bm25(search_fts) AS rank
+        FROM search_fts
+        JOIN entity_observations obs
+          ON search_fts.content_id = obs.id
+         AND search_fts.content_type = 'observation'
+         AND obs.valid_to IS NULL
+        WHERE search_fts MATCH ?
+      ) ranked
+      JOIN entities e ON e.id = ranked.entity_id
+      WHERE 1=1 ${typeFilter}
       GROUP BY e.id
       ORDER BY rank
       LIMIT ?
     `;
-    const args: unknown[] = [fts];
+    const args: unknown[] = [fts, fts];
     if (input.entityType) args.push(input.entityType);
     args.push(limit);
     const rows = db.prepare(sql).all(...args);
     return { success: true, data: { results: rows, count: (rows as unknown[]).length } };
   } catch {
-    // Fallback: LIKE on name
-    const rows = db
-      .prepare(
-        `SELECT id, name, entity_type, summary, updated_at
-         FROM entities
-         WHERE name LIKE ? ${input.entityType ? 'AND entity_type = ?' : ''}
-         ORDER BY updated_at DESC
-         LIMIT ?`
-      )
-      .all(...(input.entityType ? [`%${input.query}%`, input.entityType, limit] : [`%${input.query}%`, limit]));
+    // Fallback: LIKE across name AND summary. The previous fallback searched
+    // name only, which silently dropped every query whose match was in the
+    // summary or an observation — symptom of the old bm25-in-JOIN bug.
+    const pattern = `%${input.query}%`;
+    const typeFilter = input.entityType ? 'AND entity_type = ?' : '';
+    const sql = `
+      SELECT DISTINCT e.id, e.name, e.entity_type, e.summary, e.updated_at
+      FROM entities e
+      LEFT JOIN entity_observations obs
+        ON obs.entity_id = e.id AND obs.valid_to IS NULL
+      WHERE (e.name LIKE ? OR e.summary LIKE ? OR obs.content LIKE ?)
+        ${typeFilter}
+      ORDER BY e.updated_at DESC
+      LIMIT ?
+    `;
+    const args: unknown[] = [pattern, pattern, pattern];
+    if (input.entityType) args.push(input.entityType);
+    args.push(limit);
+    const rows = db.prepare(sql).all(...args);
     return { success: true, data: { results: rows, count: (rows as unknown[]).length } };
   }
 }
