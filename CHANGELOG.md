@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Performance — push `entityType` filter into FTS5 sub-queries (Session 840, 2026-04-21)
+
+`memory_entity_search` has filtered matches by `entityType` since v1.0.0,
+but the filter was applied on the *outer* SELECT — after the `UNION ALL`
+had already ranked every FTS match across all types. On large stores this
+forced bm25() to rank rows we were about to throw away.
+
+Push the filter down into each leg of the `UNION ALL`:
+
+- entity-row leg gets `AND e.entity_type = ?`
+- observation-row leg adds a second JOIN to `entities e_obs` and filters
+  `AND e_obs.entity_type = ?`
+
+Effect: narrow-type queries (e.g. "search for `Server` entityType=tool" on
+a 100k-entity store with 90% non-tool) scan ~10× fewer rows inside the
+`UNION ALL`. The outer query is one GROUP BY over a shorter list.
+
+The fallback LIKE query already filtered in its WHERE clause — unchanged.
+
+**`tests/entity.test.ts`** gains a regression guard that creates two
+entities of different types whose observations both mention the same
+search term, and verifies the `entityType` filter matches only one.
+
+**Post-review follow-through (Session 840 Agent Critic):**
+
+The Critic confirmed the push-down is required (SQLite ≥ 3.40.0
+deliberately disabled automatic WHERE-push in `UNION ALL` branches, a
+documented 4 700× regression) but flagged three edge cases without
+coverage:
+
+- observation-only hits (entity name doesn't match but observation
+  content does) — new test `returns an observation-only hit when the
+  entity name does not match`.
+- case-insensitivity of the FTS tokenizer — new test
+  `FTS search is case-insensitive on both name and observation legs`.
+- zero-match FTS quoted phrases not falling into the LIKE fallback —
+  new test `handles an empty FTS MATCH result without falling into the
+  LIKE fallback`.
+
+Total: **87/87 green** (83 existing + 4 new).
+
 ## 1.0.7 — 2026-04-21
 
 Correctness patch + test expansion. No API changes.

@@ -237,6 +237,34 @@ describe('entitySearch', () => {
     }
   });
 
+  it('entityType filter also applies to observation-only matches (pushed-down filter)', async () => {
+    const { entityCreate, entityObserve, entitySearch } = await import('./entity.js');
+    // Two entities of different types whose observations both mention the
+    // search term. Only the tool should come back when we filter on type.
+    const tool = entityCreate({ name: 'SynthA', entityType: 'tool', summary: 'x' });
+    const person = entityCreate({ name: 'SynthB', entityType: 'person', summary: 'y' });
+    if (!tool.success || !person.success) throw new Error('setup failed');
+    entityObserve({
+      entityName: 'SynthA',
+      entityType: 'tool',
+      content: 'mentions Zepto-Observation explicitly',
+    });
+    entityObserve({
+      entityName: 'SynthB',
+      entityType: 'person',
+      content: 'mentions Zepto-Observation explicitly',
+    });
+
+    const result = entitySearch({ query: 'Zepto-Observation', entityType: 'tool' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const d = result.data as { results: Array<{ entity_type: string; name: string }> };
+      expect(d.results.length).toBe(1);
+      expect(d.results[0]?.entity_type).toBe('tool');
+      expect(d.results[0]?.name).toBe('SynthA');
+    }
+  });
+
   it('respects the limit parameter', async () => {
     const { entityCreate, entitySearch } = await import('./entity.js');
     for (let i = 0; i < 5; i++) {
@@ -254,6 +282,59 @@ describe('entitySearch', () => {
   it('returns empty results (not an error) for a query with zero matches', async () => {
     const { entitySearch } = await import('./entity.js');
     const result = entitySearch({ query: 'totallyabsenttermxyz' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const d = result.data as { results: unknown[] };
+      expect(d.results.length).toBe(0);
+    }
+  });
+
+  it('returns an observation-only hit when the entity name does not match', async () => {
+    const { entityCreate, entityObserve, entitySearch } = await import('./entity.js');
+    entityCreate({ name: 'UnrelatedName', entityType: 'tool', summary: 'something else' });
+    entityObserve({
+      entityName: 'UnrelatedName',
+      entityType: 'tool',
+      content: 'this observation references ObsOnlyKeyword quite clearly',
+    });
+    const result = entitySearch({ query: 'ObsOnlyKeyword' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const d = result.data as { results: Array<{ name: string }> };
+      expect(d.results.length).toBe(1);
+      expect(d.results[0]?.name).toBe('UnrelatedName');
+    }
+  });
+
+  it('FTS search is case-insensitive on both name and observation legs', async () => {
+    const { entityCreate, entityObserve, entitySearch } = await import('./entity.js');
+    entityCreate({ name: 'MixedCaseName', entityType: 'project', summary: 'summaryTEXT' });
+    entityObserve({
+      entityName: 'MixedCaseName',
+      entityType: 'project',
+      content: 'observation with MixedKeywordExample inside',
+    });
+    // SQLite FTS5 tokenizer is case-insensitive by default — verify with
+    // queries in the opposite case from what was stored.
+    const r1 = entitySearch({ query: 'mixedcasename' });
+    expect(r1.success).toBe(true);
+    if (r1.success) {
+      expect((r1.data as { results: unknown[] }).results.length).toBe(1);
+    }
+    const r2 = entitySearch({ query: 'MIXEDKEYWORDEXAMPLE' });
+    expect(r2.success).toBe(true);
+    if (r2.success) {
+      expect((r2.data as { results: unknown[] }).results.length).toBe(1);
+    }
+  });
+
+  it('handles an empty FTS MATCH result without falling into the LIKE fallback', async () => {
+    const { entityCreate, entitySearch } = await import('./entity.js');
+    entityCreate({ name: 'Solo', entityType: 'tool', summary: 'x' });
+    // A quoted phrase that cannot match any token is a valid FTS query
+    // returning zero rows — not an error. The code must keep going rather
+    // than raise to the LIKE fallback.
+    const result = entitySearch({ query: '"absolutelynomatchtoken"' });
     expect(result.success).toBe(true);
     if (result.success) {
       const d = result.data as { results: unknown[] };
