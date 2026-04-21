@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.7 — 2026-04-21
+
+Correctness patch + test expansion. No API changes.
+
+- **Fix: `memory_entity_search` silently lost summary and observation hits.**
+  The primary FTS5 query joined `search_fts` to `entities` with an OR that
+  mixed entity-level and observation-level matches. That puts the `MATCH`
+  subquery behind a derived JOIN, which SQLite rejects with "unable to use
+  function bm25 in the requested context". The try/catch caught it and fell
+  back to `WHERE name LIKE ?` — so any hit whose match lived in the entity
+  summary or in an observation disappeared. Rewrite: two `MATCH`-ed subqueries
+  `UNION ALL`'d by `entity_id`, then JOIN entities + GROUP BY with `MIN(rank)`.
+  The fallback LIKE now also covers `summary` and `observations.content` via
+  a LEFT JOIN, so an FTS outage still returns sensible rows.
+- **Add `obs_au` trigger** on `entity_observations` so an UPDATE to an
+  observation's `content` refreshes the FTS5 row instead of leaving a stale
+  one pointing at the old text. Symmetric with the existing triggers on
+  `learnings` / `decisions` / `entities`. No current code path edits
+  observation content, but the symmetry keeps future edits safe.
+- **Expand test coverage from 12 → 83 tests** (+71). `src/tools/entity.test.ts`
+  (35 tests), `session.test.ts` (19), `search.test.ts` (17). Every tool surface
+  exercised, plus the v1.0.6 archived-learning regression guard and the
+  `obs_au` trigger verification.
+
 ## 1.0.6 — 2026-04-21
 
 Correctness + performance patch. No API changes.
