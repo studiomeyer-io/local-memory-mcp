@@ -1,3 +1,7 @@
+<!-- studiomeyer-mcp-stack-banner:start -->
+> **Part of the [StudioMeyer MCP Stack](https://studiomeyer.io)** — Built in Mallorca 🌴 · ⭐ if you use it
+<!-- studiomeyer-mcp-stack-banner:end -->
+
 # local-memory-mcp
 
 **Persistent local memory for Claude, Cursor & Codex. 13 tools. No cloud. No API keys.**
