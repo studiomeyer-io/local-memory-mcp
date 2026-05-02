@@ -199,7 +199,7 @@ Two products, same team, different use cases:
 | | **local-memory-mcp** (this repo) | **StudioMeyer Memory** (hosted) |
 |---|---|---|
 | Where | Your machine (SQLite) | Cloud (Supabase EU Frankfurt) |
-| Tools | 13 | 53 |
+| Tools | 13 | 56 |
 | Search | FTS5 keyword | FTS5 + pgvector semantic + reranking |
 | Multi-device | No | Yes |
 | Multi-agent | No | Yes |
@@ -213,7 +213,7 @@ Start local. Upgrade when you need teams or semantic search.
 
 | Server | What it does | Link |
 |--------|-------------|------|
-| **StudioMeyer Memory** | Hosted AI memory with 53 tools, semantic search, multi-agent | [memory.studiomeyer.io](https://memory.studiomeyer.io) |
+| **StudioMeyer Memory** | Hosted AI memory with 56 tools, semantic search, multi-agent | [memory.studiomeyer.io](https://memory.studiomeyer.io) |
 | **StudioMeyer CRM** | AI-native CRM -- 33 tools, pipeline, leads, revenue | [crm.studiomeyer.io](https://crm.studiomeyer.io) |
 | **StudioMeyer GEO** | AI visibility monitoring -- 23 tools, 8 LLM platforms | [geo.studiomeyer.io](https://geo.studiomeyer.io) |
 | **MCP Crew** | Agent personas for Claude -- 10 tools, 8 roles, 3 workflows | [crew.studiomeyer.io](https://crew.studiomeyer.io) |
@@ -221,6 +221,10 @@ Start local. Upgrade when you need teams or semantic search.
 ## Contributing
 
 Issues and PRs welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md).
+
+## About StudioMeyer
+
+[StudioMeyer](https://studiomeyer.io) is an AI and design studio from Palma de Mallorca, building custom websites and AI infrastructure for small and medium businesses. Production stack on Claude Agent SDK, MCP, n8n and an in-house observability and guard layer.
 
 ## License
 
