@@ -4,7 +4,14 @@
 
 # local-memory-mcp
 
-**Persistent local memory for Claude, Cursor & Codex. 13 tools. No cloud. No API keys.**
+
+<!-- badges -->
+[![npm version](https://img.shields.io/npm/v/%40studiomeyer%2Flocal-memory-mcp?style=flat-square&color=cb3837&logo=npm&label=npm)](https://www.npmjs.com/package/@studiomeyer/local-memory-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/%40studiomeyer%2Flocal-memory-mcp?style=flat-square&color=cb3837&logo=npm&label=installs%2Fmo)](https://www.npmjs.com/package/@studiomeyer/local-memory-mcp)
+![License](https://img.shields.io/github/license/studiomeyer-io/local-memory-mcp?style=flat-square&color=22c55e&label=license)
+![Last commit](https://img.shields.io/github/last-commit/studiomeyer-io/local-memory-mcp?style=flat-square&color=88c0d0&label=updated)
+![GitHub stars](https://img.shields.io/github/stars/studiomeyer-io/local-memory-mcp?style=flat-square&color=ffd700&logo=github&label=stars)
+<!-- /badges -->**Persistent local memory for Claude, Cursor & Codex. 13 tools. No cloud. No API keys.**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@studiomeyer/local-memory-mcp)](https://www.npmjs.com/package/@studiomeyer/local-memory-mcp)
