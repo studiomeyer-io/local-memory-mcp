@@ -235,6 +235,10 @@ Start local. Upgrade when you need teams or semantic search.
 | **StudioMeyer GEO** | AI visibility monitoring -- 23 tools, 8 LLM platforms | [geo.studiomeyer.io](https://geo.studiomeyer.io) |
 | **MCP Crew** | Agent personas for Claude -- 10 tools, 8 roles, 3 workflows | [crew.studiomeyer.io](https://crew.studiomeyer.io) |
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for the threat model, reporting process, and notes on known SAST scanner false positives. In particular: `db.exec(schema)` in `src/db/client.ts` is `better-sqlite3`'s SQL-string executor, not `child_process.exec` — some pattern-based scanners flag it without import resolution. The repo contains zero shell-execution code (verify with `grep -rn child_process src/`).
+
 ## Contributing
 
 Issues and PRs welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md).

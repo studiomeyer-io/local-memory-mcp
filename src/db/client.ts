@@ -51,7 +51,11 @@ export function getDb(): Database.Database {
   // any SQLITE_BUSY short-circuits the request instead of waiting briefly.
   db.pragma('busy_timeout = 5000');
 
-  // Bootstrap schema — idempotent because of IF NOT EXISTS
+  // Bootstrap schema — idempotent because of IF NOT EXISTS.
+  // NOTE: db.exec() below is better-sqlite3's SQL-string executor
+  // (Database.prototype.exec), NOT child_process.exec. No shell is invoked.
+  // Some SAST scanners regex-match `.exec(` without import-resolution and
+  // mis-flag this as shell command execution. See SECURITY.md.
   const schemaPath = join(__dirname, 'schema.sql');
   const schema = readFileSync(schemaPath, 'utf-8');
   db.exec(schema);
