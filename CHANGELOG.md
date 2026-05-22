@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added — MCPB bundle for one-click Claude Desktop install
+
+Built a `.mcpb` bundle (MCP Bundle, the official Anthropic format for one-click MCP install in Claude Desktop) packing `dist/`, production `node_modules/`, and a complete `manifest.json` (with tool inventory + `user_config.db_path` for the SQLite database location).
+
+- `local-memory-mcp-1.0.8-linux-x64.mcpb` — 7.0 MB, ships the SQLite native binary for Linux x64. Users on Linux just double-click to install — no JSON editing, no `npm install`, no terminal.
+- Bundle pipeline scripted as `scripts/build-mcpb.sh` and the build directory `mcpb-build/` is `.gitignore`d to keep the repo clean.
+- Manifest schema validated with `mcpb validate` (`@anthropic-ai/mcpb@2.1.2`), pack via `mcpb pack`.
+- Platform note: only `linux-x64` for now because `better-sqlite3` is a native dependency and only that platform's `.node` binary is bundled. macOS/Windows users continue to use the `npx -y` install path (which rebuilds for the host). Multi-platform bundles via GitHub Actions matrix are a planned follow-up.
+
+Why MCPB matters: it closes the friction gap for non-developer users who can't edit `claude_desktop_config.json`. KMU customers, designers, and writers can install Local Memory by clicking a file — same UX as installing a desktop app. The repo also serves as the zero-config default for [darwin-agents](https://github.com/studiomeyer-io/darwin-agents), so reducing its install friction benefits the whole Darwin ecosystem.
+
 ## [1.0.8] — 2026-05-22
 
 Trust + adoption polish based on an outside-the-fleet audit (`research/2026-05-22-local-memory-mcp-improvement-sweep.md` in the nex-hq mirror). Three drifts and one architectural omission, all small fixes with disproportionate trust impact.

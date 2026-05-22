@@ -6,3 +6,9 @@ dist/
 .DS_Store
 mcpb/build/
 *.mcpb
+
+# MCPB bundle build artifacts (manifest.json stays in git, the rest is rebuilt)
+mcpb-build/server/
+mcpb-build/node_modules/
+mcpb-build-deps/
+node_modules-prod/

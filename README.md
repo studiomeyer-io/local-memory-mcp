@@ -41,7 +41,11 @@ claude mcp add memory -- npx -y @studiomeyer/local-memory-mcp
 
 ### Claude Desktop
 
-Add to `claude_desktop_config.json` ([Settings > Developer > Edit Config](https://modelcontextprotocol.io/quickstart/user)):
+**Easiest (Linux x64): one-click MCPB bundle.** Download `local-memory-mcp-1.0.8-linux-x64.mcpb` from the [latest release](https://github.com/studiomeyer-io/local-memory-mcp/releases/latest) and double-click. Claude Desktop walks you through the install — no JSON editing, no `npm install`, no terminal. The bundle ships the SQLite native binary + all dependencies (7 MB packed).
+
+> **Platform note:** the MCPB bundle currently ships only the `linux-x64` native `better-sqlite3` binary. macOS, Windows, and other architectures should use the manual config below (the `npx -y` install rebuilds the native binary for your platform automatically). Multi-platform bundles are a planned follow-up.
+
+**Manual config** (all platforms — add to `claude_desktop_config.json`, see [Settings > Developer > Edit Config](https://modelcontextprotocol.io/quickstart/user)):
 
 ```json
 {

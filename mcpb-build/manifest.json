@@ -1,0 +1,73 @@
+{
+  "manifest_version": "0.4",
+  "name": "local-memory-mcp",
+  "display_name": "Local Memory",
+  "version": "1.0.8",
+  "description": "Persistent local memory for any MCP client. SQLite, FTS5, Knowledge Graph. No cloud, no API keys.",
+  "long_description": "Local-first persistent memory for AI agents. Stores learnings, decisions, sessions, entities, and observations in a single SQLite file under your OS data dir. 17 tools: memory_learn, memory_search, memory_recall, memory_decide, memory_session_start/end, memory_entity_create/observe/relate/delete, memory_skill, memory_goal, memory_health, plus aliases. Zero cloud, zero API keys, MIT licensed. Designed as the zero-config default for darwin-agents.",
+  "author": {
+    "name": "StudioMeyer",
+    "email": "hello@studiomeyer.io",
+    "url": "https://studiomeyer.io"
+  },
+  "homepage": "https://github.com/studiomeyer-io/local-memory-mcp",
+  "documentation": "https://github.com/studiomeyer-io/local-memory-mcp#readme",
+  "support": "https://github.com/studiomeyer-io/local-memory-mcp/issues",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "memory",
+    "local-first",
+    "sqlite",
+    "knowledge-graph",
+    "claude",
+    "cursor",
+    "darwin-agents"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/server.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/server.js"],
+      "env": {
+        "MEMORY_DB_PATH": "${user_config.db_path}"
+      }
+    }
+  },
+  "user_config": {
+    "db_path": {
+      "type": "string",
+      "title": "Database file path",
+      "description": "Where to store the SQLite memory database. Leave default to use the OS data directory.",
+      "default": "${HOME}/.local/share/local-memory-mcp/memory.sqlite",
+      "required": false
+    }
+  },
+  "tools": [
+    {"name": "memory_learn", "description": "Store a learning (pattern/mistake/insight)"},
+    {"name": "memory_search", "description": "Full-text search across learnings + decisions + sessions"},
+    {"name": "memory_recall", "description": "Quick recent-memories recall"},
+    {"name": "memory_decide", "description": "Log a decision with reasoning + alternatives"},
+    {"name": "memory_session_start", "description": "Start a session (loads prior context)"},
+    {"name": "memory_session_end", "description": "End a session (persists summary)"},
+    {"name": "memory_entity_create", "description": "Create a knowledge graph entity"},
+    {"name": "memory_entity_observe", "description": "Add an observation to an entity"},
+    {"name": "memory_entity_relate", "description": "Relate two entities (edge in KG)"},
+    {"name": "memory_entity_delete", "description": "Delete an entity (with confirm)"},
+    {"name": "memory_entity_search", "description": "Search entities by name + observation text"},
+    {"name": "memory_entity_open", "description": "Load entity with all observations + relations"},
+    {"name": "memory_skill", "description": "Track skill usage (recipe + tool + outcome)"},
+    {"name": "memory_goal", "description": "Set a goal with target + deadline"},
+    {"name": "memory_health", "description": "Health check (DB integrity + counts)"},
+    {"name": "memory_summarize", "description": "Persist a structured session summary"},
+    {"name": "memory_proactive", "description": "Proactive suggestions based on stale items + open decisions + clusters"}
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "linux", "win32"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}
