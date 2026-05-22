@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.0.8] — 2026-05-22
+
+Trust + adoption polish based on an outside-the-fleet audit (`research/2026-05-22-local-memory-mcp-improvement-sweep.md` in the nex-hq mirror). Three drifts and one architectural omission, all small fixes with disproportionate trust impact.
+
+### Fixed — Version drift sweep
+
+- `src/server.ts` hardcoded `SERVER_VERSION = '1.0.6'` while `package.json` was at v1.0.7. Every MCP client's `initialize` response saw the wrong version. Now reads `1.0.8` consistently.
+- `server.json` (MCP Registry manifest) was at `1.0.1` — six releases behind. Bumped to `1.0.8` plus the embedded `packages[0].version`.
+- `package.json` bumped to `1.0.8`.
+
+### Added — Four tools that already had handlers + tests, but were unreachable
+
+`entityCreate`, `entityDelete`, `goal`, and `health` were exported, had Zod schemas, had unit-test coverage — but were missing from the `TOOLS` array. MCP clients calling `tools/list` got 13 tools instead of 17. Now registered:
+
+- **`memory_entity_create`** — explicitly create an entity without an initial observation. Idempotent on `name + entityType`.
+- **`memory_entity_delete`** — delete an entity + all its observations + relations. Destructive — use with care.
+- **`memory_goal`** — read / set / clear a single user goal stored in the profile table.
+- **`memory_health`** — SQLite integrity check + page-count + DB-size + WAL status. Zero-input.
+
+`TOOLS.length` is now `17`. The drift-detection test in `src/tools/learn.test.ts` is updated; a new test pins the four formerly-orphan tools by name so this class of drift cannot recur silently.
+
+### Added — CI workflow
+
+`.github/workflows/test.yml` runs `npx tsc --noEmit`, `npm test`, and `npm run build` on Node 20 / 22 / 24 for every push and PR to `main`. The repo previously had only `publish-registry.yml` (tag-driven) — no green-on-PR signal for contributors.
+
+### Removed
+
+- Duplicate root `CONTRIBUTING.md`. The canonical guide lives at `.github/CONTRIBUTING.md` — that is where GitHub surfaces it. The root copy had drifted out of sync.
+- `bun.lock`. We support `npm` and `bun` consumers, but two lockfiles is a known source of drift and the file was undocumented. `package-lock.json` remains the source of truth.
+
+### Notes
+
+No API breakage. The four newly-registered tools were already callable as importable functions; they are now also reachable over MCP.
+
 ## Unreleased
 
 ### Performance — push `entityType` filter into FTS5 sub-queries (Session 840, 2026-04-21)

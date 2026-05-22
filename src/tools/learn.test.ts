@@ -164,16 +164,25 @@ describe('recall + search', () => {
 });
 
 describe('tool registry', () => {
-  it('exports exactly 13 tools with valid JSON Schema for each', async () => {
+  it('exports exactly 17 tools with valid JSON Schema for each', async () => {
     const { TOOLS, toMcpToolList } = await import('./registry.js');
-    expect(TOOLS.length).toBe(13);
+    expect(TOOLS.length).toBe(17);
     const listed = toMcpToolList();
-    expect(listed.length).toBe(13);
+    expect(listed.length).toBe(17);
     for (const t of listed) {
       expect(t.name).toMatch(/^memory_/);
       expect(typeof t.description).toBe('string');
       expect((t.inputSchema as Record<string, unknown>).type).toBe('object');
     }
+  });
+
+  it('registers the four previously-orphan tools (entity_create, entity_delete, goal, health)', async () => {
+    const { toMcpToolList } = await import('./registry.js');
+    const names = toMcpToolList().map((t) => t.name);
+    expect(names).toContain('memory_entity_create');
+    expect(names).toContain('memory_entity_delete');
+    expect(names).toContain('memory_goal');
+    expect(names).toContain('memory_health');
   });
 
   it('memory_learn input schema includes required category and content', async () => {

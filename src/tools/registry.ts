@@ -15,16 +15,23 @@ import { learn, learnSchema, recall, recallSchema } from './learn.js';
 import { search, searchSchema } from './search.js';
 import { decide, decideSchema } from './decide.js';
 import {
+  entityCreate, entityCreateSchema,
   entityObserve, entityObserveSchema,
   entitySearch, entitySearchSchema,
   entityOpen, entityOpenSchema,
   entityRelate, entityRelateSchema,
+  entityDelete, entityDeleteSchema,
 } from './entity.js';
 import {
   insights, insightsSchema,
   profile, profileSchema,
   guide, guideSchema,
+  goal, goalSchema,
+  health,
 } from './insights.js';
+
+// Empty-object schema for tools without inputs (memory_health).
+const noInputSchema = z.object({}).strict();
 
 interface ToolDef {
   name: string;
@@ -71,6 +78,12 @@ export const TOOLS: ToolDef[] = [
     handler: (input) => decide(input as z.infer<typeof decideSchema>),
   },
   {
+    name: 'memory_entity_create',
+    description: 'Create an entity explicitly (without an initial observation). Idempotent on name+entityType.',
+    schema: entityCreateSchema,
+    handler: (input) => entityCreate(input as z.infer<typeof entityCreateSchema>),
+  },
+  {
     name: 'memory_entity_observe',
     description: 'Record a fact about an entity. Creates the entity if missing.',
     schema: entityObserveSchema,
@@ -95,6 +108,12 @@ export const TOOLS: ToolDef[] = [
     handler: (input) => entityRelate(input as z.infer<typeof entityRelateSchema>),
   },
   {
+    name: 'memory_entity_delete',
+    description: 'Delete an entity and all its observations + relations. Destructive — use with care.',
+    schema: entityDeleteSchema,
+    handler: (input) => entityDelete(input as z.infer<typeof entityDeleteSchema>),
+  },
+  {
     name: 'memory_insights',
     description: 'Stats and reflection: days of memory, totals, category breakdown, entity type breakdown.',
     schema: insightsSchema,
@@ -111,6 +130,18 @@ export const TOOLS: ToolDef[] = [
     description: 'On-demand help. Topics: quickstart, session, search, entities, learn, privacy.',
     schema: guideSchema,
     handler: (input) => guide(input as z.infer<typeof guideSchema>),
+  },
+  {
+    name: 'memory_goal',
+    description: 'Read, set, or clear a single user goal stored in the profile table.',
+    schema: goalSchema,
+    handler: (input) => goal(input as z.infer<typeof goalSchema>),
+  },
+  {
+    name: 'memory_health',
+    description: 'SQLite integrity check + page-count + DB-size + WAL status. No input.',
+    schema: noInputSchema,
+    handler: () => health(),
   },
 ];
 

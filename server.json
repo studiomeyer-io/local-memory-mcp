@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.studiomeyer-io/local-memory-mcp",
   "title": "Local Memory",
-  "description": "Persistent local memory. SQLite, Knowledge Graph, 13 tools. No cloud.",
+  "description": "Persistent local memory. SQLite, Knowledge Graph, 17 tools. No cloud.",
   "repository": {
     "url": "https://github.com/studiomeyer-io/local-memory-mcp",
     "source": "github"
   },
-  "version": "1.0.1",
+  "version": "1.0.8",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@studiomeyer/local-memory-mcp",
-      "version": "1.0.1",
+      "version": "1.0.8",
       "transport": {
         "type": "stdio"
       },
