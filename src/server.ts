@@ -24,7 +24,7 @@ import { closeDb, getDb } from './db/client.js';
 import { getHandler, toMcpToolList, TOOLS } from './tools/registry.js';
 
 const SERVER_NAME = 'local-memory-mcp';
-const SERVER_VERSION = '1.0.8';
+const SERVER_VERSION = '2.0.0';
 
 const INSTRUCTIONS = `Local Memory — Persistent memory for your AI assistant.
 
@@ -40,11 +40,31 @@ EVERY CONVERSATION:
   4. Use memory_search() or memory_recall() to find past knowledge.
   5. Call memory_session_end() at the end to save a summary.
 
-13 tools available. Call memory_guide() for help on any topic.`;
+SEARCH (v2.0.0+):
+  memory_search runs hybrid retrieval — FTS5 (BM25) fused with vector
+  cosine via Reciprocal Rank Fusion (RRF, k=60). Pass mode: 'fts' |
+  'vector' | 'hybrid' (default) to switch modes. Embeddings use the
+  multilingual-e5-small model (DE / EN / ES / 100+ languages). If the
+  vector extension can't load, search falls back to FTS5 transparently.
+
+17 tools available. Call memory_guide() for help on any topic.`;
 
 process.stderr.write('[local-memory] imports loaded, bootstrapping db…\n');
 
 async function main(): Promise<void> {
+  // F6 fix (Critic R1): if the embedding pipeline is in mock mode in
+  // production, make it loud. The mock returns deterministic FNV-1a token
+  // hashes — structurally valid 384-dim vectors, semantically nonsense. A
+  // user who accidentally exported MEMORY_EMBED_MOCK=1 (e.g. from a stale
+  // .bashrc after debugging) would otherwise build up a corpus of garbage
+  // embeddings without ever seeing an error. The warning is loud and
+  // explicit so it surfaces on every startup until the env var is removed.
+  if (process.env.MEMORY_EMBED_MOCK === '1') {
+    process.stderr.write(
+      '[local-memory] WARNING: MEMORY_EMBED_MOCK=1 is active — embeddings are deterministic token hashes, NOT semantic vectors. Do not use this in production. Unset the variable to enable the real model.\n'
+    );
+  }
+
   // Bootstrap the DB early so any schema errors surface before we announce ready.
   try {
     getDb();

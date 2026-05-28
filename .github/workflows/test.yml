@@ -14,6 +14,11 @@ jobs:
       matrix:
         node-version: ['20', '22', '24']
       fail-fast: false
+    env:
+      # Mock embeddings: deterministic 384-dim vectors derived from token hashes
+      # so we can exercise the hybrid-search path without pulling the 120 MB
+      # multilingual-e5-small model into every CI run.
+      MEMORY_EMBED_MOCK: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

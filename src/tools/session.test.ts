@@ -117,7 +117,7 @@ describe('sessionStart', () => {
     const { sessionStart } = await import('./session.js');
     const { learn } = await import('./learn.js');
     for (let i = 0; i < 7; i++) {
-      learn({ category: 'pattern', content: `entry ${i}` });
+      await learn({ category: 'pattern', content: `entry ${i}` });
     }
     const result = sessionStart({});
     if (result.success) {
@@ -130,8 +130,8 @@ describe('sessionStart', () => {
     const { sessionStart } = await import('./session.js');
     const { learn } = await import('./learn.js');
     const { getDb } = await import('../db/client.js');
-    learn({ category: 'pattern', content: 'keeper one' });
-    const archived = learn({ category: 'pattern', content: 'archived one' });
+    await learn({ category: 'pattern', content: 'keeper one' });
+    const archived = await learn({ category: 'pattern', content: 'archived one' });
     if (archived.success) {
       getDb()
         .prepare('UPDATE learnings SET archived = 1 WHERE id = ?')

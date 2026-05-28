@@ -11,7 +11,7 @@
 ![License](https://img.shields.io/github/license/studiomeyer-io/local-memory-mcp?style=flat-square&color=22c55e&label=license)
 ![Last commit](https://img.shields.io/github/last-commit/studiomeyer-io/local-memory-mcp?style=flat-square&color=88c0d0&label=updated)
 ![GitHub stars](https://img.shields.io/github/stars/studiomeyer-io/local-memory-mcp?style=flat-square&color=ffd700&logo=github&label=stars)
-<!-- /badges -->**Persistent local memory for Claude, Cursor & Codex. 17 tools. No cloud. No API keys.**
+<!-- /badges -->**Persistent local memory for Claude, Cursor & Codex. 17 tools. Hybrid retrieval (BM25 + vector cosine, RRF). Multilingual embeddings. No cloud. No API keys.**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@studiomeyer/local-memory-mcp)](https://www.npmjs.com/package/@studiomeyer/local-memory-mcp)
@@ -19,7 +19,9 @@
 
 Your AI assistant forgets everything when you close the chat. This fixes that.
 
-Learnings, decisions, people, projects -- stored in a **single SQLite file** on your machine that never leaves your computer. Built-in Knowledge Graph, duplicate detection, and full-text search.
+Learnings, decisions, people, projects — stored in a **single SQLite file** on your machine that never leaves your computer. Built-in Knowledge Graph, duplicate detection, FTS5 keyword search, and (new in v2) **hybrid retrieval** that fuses BM25 with on-device vector cosine via Reciprocal Rank Fusion. The embedding model is multilingual (DE / EN / ES / 100+ languages) and runs locally — no API keys, no cloud.
+
+> **Not affiliated with [`danieleugenewilliams/local-memory-releases`](https://github.com/danieleugenewilliams/local-memory-releases)** — that is a different "Local Memory" project with the same descriptive name. This package is published as [`@studiomeyer/local-memory-mcp`](https://www.npmjs.com/package/@studiomeyer/local-memory-mcp) — always use the scoped name to disambiguate.
 
 ## A note from us
 
@@ -41,9 +43,16 @@ claude mcp add memory -- npx -y @studiomeyer/local-memory-mcp
 
 ### Claude Desktop
 
-**Easiest (Linux x64): one-click MCPB bundle.** Download `local-memory-mcp-1.0.8-linux-x64.mcpb` from the [latest release](https://github.com/studiomeyer-io/local-memory-mcp/releases/latest) and double-click. Claude Desktop walks you through the install — no JSON editing, no `npm install`, no terminal. The bundle ships the SQLite native binary + all dependencies (7 MB packed).
+**Easiest: one-click MCPB bundle.** v2.0.0 ships pre-built `.mcpb` bundles for every major desktop platform — download the one for your OS from the [latest release](https://github.com/studiomeyer-io/local-memory-mcp/releases/latest) and double-click. Claude Desktop walks you through the install — no JSON editing, no `npm install`, no terminal.
 
-> **Platform note:** the MCPB bundle currently ships only the `linux-x64` native `better-sqlite3` binary. macOS, Windows, and other architectures should use the manual config below (the `npx -y` install rebuilds the native binary for your platform automatically). Multi-platform bundles are a planned follow-up.
+| Platform | Bundle |
+|---|---|
+| Linux x64 | `local-memory-mcp-2.0.0-linux-x64.mcpb` |
+| macOS Apple Silicon | `local-memory-mcp-2.0.0-darwin-arm64.mcpb` |
+| macOS Intel | `local-memory-mcp-2.0.0-darwin-x64.mcpb` |
+| Windows x64 | `local-memory-mcp-2.0.0-win32-x64.mcpb` |
+
+Each bundle is platform-specific because `better-sqlite3` is a native module — the matching `.node` binary is shipped inside the bundle so you don't need a build toolchain.
 
 **Manual config** (all platforms — add to `claude_desktop_config.json`, see [Settings > Developer > Edit Config](https://modelcontextprotocol.io/quickstart/user)):
 
@@ -114,11 +123,38 @@ Both approaches make Claude call `memory_session_start` automatically. The CLAUD
 
 When you start a conversation, the server loads context from your last sessions so the AI knows what you were working on.
 
-During the conversation, the AI stores patterns, insights, and mistakes via `memory_learn`. It records facts about people, projects, and tools via `memory_entity_observe` -- building a knowledge graph over time.
+During the conversation, the AI stores patterns, insights, and mistakes via `memory_learn`. It records facts about people, projects, and tools via `memory_entity_observe` — building a knowledge graph over time. Every stored row is also embedded into a local 384-dim vector via the multilingual-e5-small model.
 
-When you search, FTS5 full-text search with bm25 ranking finds relevant memories instantly. The duplicate gatekeeper prevents storing the same information twice.
+When you search, the unified `memory_search` runs **hybrid retrieval**: FTS5 with BM25 ranking is fused with vector cosine via Reciprocal Rank Fusion (RRF, k=60). That bridges vocabulary mismatches ("send" finds "publish"), works across DE / EN / ES / 100+ languages, and matches even when the query has no exact token overlap with the stored content. If the vector extension can't load on your machine, search transparently falls back to FTS5-only — nothing breaks, you just lose the semantic half.
 
-## Tools (13)
+The duplicate gatekeeper still prevents storing the same information twice.
+
+## Hybrid Search (v2.0.0+)
+
+```text
+memory_search({ query: "...", mode: "hybrid" })   // default
+memory_search({ query: "...", mode: "fts" })       // keyword only
+memory_search({ query: "...", mode: "vector" })    // cosine only
+```
+
+**Architecture**
+
+- `search_fts` (FTS5, BM25) — keyword recall, the v1 path.
+- `embeddings` (`sqlite-vec` `vec0` virtual table, float[384]) — vector recall.
+- Reciprocal Rank Fusion (k=60) combines the two when `mode: "hybrid"`.
+- Embeddings come from `Xenova/multilingual-e5-small` (Apache-2.0) via Transformers.js, q8-quantized (~30 MB cache). Model loads lazily on the first embed call; runs entirely on CPU.
+- Auto-embed-on-insert covers learnings, decisions, and entity observations. Entities themselves are not embedded — their attached observations carry the semantic surface.
+
+**Multilingual.** The default model is trained on 100+ languages with strong DE/EN/ES retrieval. Mixing languages in your stored data is fine — query in one language and the cosine half still surfaces relevant results in another.
+
+**Environment overrides**
+
+- `MEMORY_EMBED_DISABLED=1` — force FTS5-only (e.g. air-gapped or corporate-proxy network).
+- `MEMORY_EMBED_MODEL=...` — swap in a different Transformers.js feature-extraction model.
+- `MEMORY_EMBED_CACHE_DIR=...` — override the Transformers.js cache location.
+- `MEMORY_EMBED_DTYPE=fp32|fp16|q8|q4` — model quantization (default `q8`).
+
+## Tools (17)
 
 ### Sessions
 
@@ -199,19 +235,25 @@ Override: `MEMORY_DB_PATH=/your/preferred/path.sqlite`
 
 ## Comparison
 
-| Feature | local-memory-mcp | Official MCP Memory | MemPalace | Mem0 | Zep |
-|---------|-----------------|---------------------|-----------|------|-----|
-| Local-first | Yes | Yes | Yes | No (cloud) | No (cloud) |
-| Knowledge Graph | Yes (entities + relations) | Yes (triples) | No | Paid tier | No |
-| Duplicate Guard | Yes (FTS5 similarity) | No | No | Unknown | Unknown |
-| Decision Tracking | Yes | No | No | No | No |
-| Session Context | Yes (auto-load) | No | No | No | No |
-| Full-Text Search | FTS5 + bm25 | No | No (vector only) | Vector | Vector |
-| Tools | 13 | 5 | 29 | API | API |
-| Language | TypeScript | TypeScript | Python | Python | Python |
-| Storage | SQLite | JSON file | ChromaDB | Cloud | Cloud |
-| Install | `npx` | `npx` | `pip` + venv | Sign up | Sign up |
-| Price | Free forever | Free | Free | $0-249/mo | $0-499/mo |
+| Feature | local-memory-mcp | Penfield | Official MCP Memory | MemPalace | Mem0 | Zep | Letta | AutoMem |
+|---|---|---|---|---|---|---|---|---|
+| Local-first | Yes | Yes | Yes | Yes | No (cloud) | No (cloud) | Partial | Yes |
+| Hybrid retrieval (BM25 + vector) | **Yes (RRF)** | Yes | No | No (vector only) | Vector only | Vector only | Vector + graph | Vector + graph |
+| Multilingual embeddings | **Yes (e5-small, DE/EN/ES + 100 more)** | Unknown | No | Unknown | English-leaning | English-leaning | Mixed | Mixed |
+| Knowledge Graph | Yes (entities + relations) | Yes | Yes (triples) | No | Paid tier | Yes | Yes | Yes (FalkorDB) |
+| Bi-temporal facts | Yes (schema) | Unknown | No | No | Yes | Yes | Partial | Unknown |
+| Duplicate Guard | Yes (FTS5 + similarity) | No | No | No | Unknown | Unknown | Unknown | Unknown |
+| Decision Tracking | **Yes (unique)** | No | No | No | No | No | No | No |
+| Session Context | Yes (auto-load) | Yes | No | No | No | No | Yes | Yes |
+| Tools | **17** | 17 | 5 | 29 | API | API | API | API |
+| Language | TypeScript | TypeScript | TypeScript | Python | Python | Python | Python | Python |
+| Storage | SQLite + sqlite-vec | SQLite | JSON file | ChromaDB | Cloud | Cloud | Various | FalkorDB + Qdrant |
+| API keys needed | **No** | No | No | No | Yes (cloud) | Yes (cloud) | Optional | Optional |
+| Install | `npx` or `.mcpb` | `npx` | `npx` | `pip` + venv | Sign up | Sign up | `pip` / Docker | `pip` / Docker |
+| Multi-platform bundle | **Yes (4 OS)** | No | No | n/a | n/a | n/a | n/a | n/a |
+| Price | Free forever | Free | Free | Free | $0-249/mo | $0-499/mo | Free | Free |
+
+**Where we stand out:** the only local, MIT-licensed, API-key-free memory MCP shipping hybrid retrieval (BM25 + vector cosine via RRF) with multilingual embeddings and one-click installers for every desktop OS. Decision tracking remains unique to us.
 
 ## local-memory-mcp vs. StudioMeyer Memory
 
@@ -219,16 +261,17 @@ Two products, same team, different use cases:
 
 | | **local-memory-mcp** (this repo) | **StudioMeyer Memory** (hosted) |
 |---|---|---|
-| Where | Your machine (SQLite) | Cloud (Supabase EU Frankfurt) |
-| Tools | 13 | 56 |
-| Search | FTS5 keyword | FTS5 + pgvector semantic + reranking |
+| Where | Your machine (SQLite + sqlite-vec) | Cloud (Supabase EU Frankfurt) |
+| Tools | 17 | 56 |
+| Search | FTS5 + sqlite-vec hybrid (RRF) | FTS5 + pgvector + cross-encoder reranking |
+| Embeddings | Local (multilingual-e5-small, 384-dim) | Cloud (multiple models, reranking) |
 | Multi-device | No | Yes |
 | Multi-agent | No | Yes |
-| Price | Free forever | Free tier / $29 Pro / $49 Team |
-| Install | `npx` | [memory.studiomeyer.io](https://memory.studiomeyer.io) |
+| Price | Free forever | Free tier / EUR 19 Pro / EUR 39 Team |
+| Install | `npx` or `.mcpb` (Linux / macOS / Windows) | [memory.studiomeyer.io](https://memory.studiomeyer.io) |
 | Repo | [local-memory-mcp](https://github.com/studiomeyer-io/local-memory-mcp) | [studiomeyer-memory](https://github.com/studiomeyer-io/studiomeyer-memory) (docs) |
 
-Start local. Upgrade when you need teams or semantic search.
+Start local. Upgrade when you need teams, multi-device sync, or cross-encoder rerank.
 
 ## Also by StudioMeyer
 

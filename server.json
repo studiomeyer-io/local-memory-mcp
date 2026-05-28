@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.studiomeyer-io/local-memory-mcp",
   "title": "Local Memory",
-  "description": "Persistent local memory. SQLite, Knowledge Graph, 17 tools. No cloud.",
+  "description": "Persistent local memory. SQLite + FTS5 + sqlite-vec hybrid retrieval, multilingual embeddings, Knowledge Graph. 17 tools. No cloud, no API keys.",
   "repository": {
     "url": "https://github.com/studiomeyer-io/local-memory-mcp",
     "source": "github"
   },
-  "version": "1.0.8",
+  "version": "2.0.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@studiomeyer/local-memory-mcp",
-      "version": "1.0.8",
+      "version": "2.0.0",
       "transport": {
         "type": "stdio"
       },
@@ -23,6 +23,27 @@
           "format": "string",
           "isSecret": false,
           "name": "MEMORY_DB_PATH"
+        },
+        {
+          "description": "Disable the local embedding pipeline (forces FTS5-only search). Useful in restricted networks where the model can't be downloaded.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "MEMORY_EMBED_DISABLED"
+        },
+        {
+          "description": "Override the embedding model id (defaults to Xenova/multilingual-e5-small).",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "MEMORY_EMBED_MODEL"
+        },
+        {
+          "description": "Override the Transformers.js cache directory (defaults to the OS data dir).",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "MEMORY_EMBED_CACHE_DIR"
         }
       ]
     }

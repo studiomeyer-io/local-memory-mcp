@@ -7,12 +7,18 @@
  *   Windows: %APPDATA%\local-memory-mcp\memory.sqlite
  *
  * Override via MEMORY_DB_PATH env var.
+ *
+ * v2.0.0+: after the FTS5 schema bootstraps we try to load sqlite-vec and
+ * apply the embeddings virtual table migration. Both steps are best-effort —
+ * failure leaves us in FTS5-only mode but the rest of the server works
+ * unchanged.
  */
 import Database from 'better-sqlite3';
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { loadVecExtension, applyVectorSchema, _resetForTests as resetVectorState } from './vector.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -60,6 +66,12 @@ export function getDb(): Database.Database {
   const schema = readFileSync(schemaPath, 'utf-8');
   db.exec(schema);
 
+  // v2.0.0+: best-effort sqlite-vec hookup. Both calls return false silently
+  // on unsupported platforms — no exception bubbles up to break stdio.
+  if (loadVecExtension(db)) {
+    applyVectorSchema(db);
+  }
+
   dbInstance = db;
   return db;
 }
@@ -69,6 +81,10 @@ export function closeDb(): void {
     dbInstance.close();
     dbInstance = null;
   }
+  // Reset the module-level vec flag so the next getDb() rebinds the
+  // extension against the new connection (test isolation + correctness
+  // when a future MCPB run swaps DB files between processes).
+  resetVectorState();
 }
 
 // ─── Helpers ─────────────────────────────────────────

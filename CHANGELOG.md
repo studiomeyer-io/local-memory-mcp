@@ -1,6 +1,96 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.0] — 2026-05-28
+
+### Added — Hybrid retrieval (BM25 + vector cosine via RRF)
+
+`memory_search` now runs two rankers in parallel and fuses them with Reciprocal Rank Fusion (k=60):
+
+- **FTS5/BM25** — the v1 keyword path, unchanged in spirit but reused as one half of the fusion.
+- **sqlite-vec** — the [`vec0`](https://alexgarcia.xyz/sqlite-vec/) virtual table holds 384-dim Float32 embeddings keyed by content_id. KNN runs as `WHERE embedding MATCH ? AND k = ?` with results post-filtered against `search_fts` for content-type + archived-row constraints (vec0 rejects WHERE constraints on aux columns inside a KNN query).
+- **Reciprocal Rank Fusion** with `k=60` is Alex Garcia's canonical recipe and produces the best balance of keyword and semantic recall in our internal tests.
+
+The new `mode` parameter selects the path explicitly:
+
+```text
+memory_search({ query: "…", mode: "hybrid" })   // default
+memory_search({ query: "…", mode: "fts" })
+memory_search({ query: "…", mode: "vector" })
+```
+
+Whenever `sqlite-vec` is unavailable on the host or the embedding pipeline can't produce a query vector, search transparently downgrades to FTS5 — never an error, just a `mode: "fts"` in the response payload so the caller can observe what actually happened.
+
+### Added — Multilingual local embeddings
+
+`@huggingface/transformers` (v4.2.0) is now a runtime dependency. The default model is `Xenova/multilingual-e5-small` (Apache-2.0, 384-dim, native DE / EN / ES + 100 more languages). The model is q8-quantized (~30 MB cache), loaded lazily on the first `embed()` call, and reused as a singleton thereafter. Everything runs on CPU — no GPU, no API key, no network call after the first model fetch.
+
+Override knobs (env vars):
+
+- `MEMORY_EMBED_DISABLED=1` — force FTS5-only (air-gapped / corporate network).
+- `MEMORY_EMBED_MODEL=…` — swap in a different Transformers.js feature-extraction model.
+- `MEMORY_EMBED_CACHE_DIR=…` — override the Transformers.js cache location.
+- `MEMORY_EMBED_DTYPE=fp32|fp16|q8|q4` — quantization level (default `q8`).
+- `MEMORY_EMBED_MOCK=1` — deterministic bag-of-tokens mock for CI / tests.
+
+### Added — Auto-embed on insert
+
+`memory_learn`, `memory_decide`, and `memory_entity_observe` upsert an embedding into the `embeddings` virtual table after a successful insert. Upsert is modeled as DELETE-then-INSERT inside a single transaction because vec0 doesn't honour `INSERT OR REPLACE` on its primary key. Failures (model not loaded, network blocked) are logged once and swallowed — the insert is the source of truth, the embedding is a recall optimization.
+
+### Added — Multi-platform MCPB bundles via GitHub Actions matrix
+
+`.github/workflows/release-mcpb.yml` now builds four `.mcpb` bundles in parallel on every `v*` tag push:
+
+- `linux-x64`
+- `darwin-x64` (Intel Mac)
+- `darwin-arm64` (Apple Silicon)
+- `win32-x64`
+
+Each bundle includes the platform-correct `better-sqlite3` and `sqlite-vec` prebuilt binaries and is attached as a Release asset. macOS, Windows, and Linux users can now double-click to install without a build toolchain.
+
+### Added — Vector status + embedding mode surfaced in `memory_health`
+
+`memory_health` now returns a `vector` block (`enabled`, `error`, `embeddingsCount`, `dim`) and an `embedding` block (`mode`, `model`) so users and ops dashboards can see at a glance whether hybrid retrieval is live or the server is running FTS5-only.
+
+### Added — Search-mode echo
+
+Every `memory_search` response now carries `data.mode` so callers can verify which ranker actually ran (relevant when the requested mode was downgraded to FTS due to vec unavailability).
+
+### Changed — Tool handlers go async
+
+`memory_learn`, `memory_decide`, `memory_entity_observe`, and `memory_search` are now `async` to await the embedding step. The MCP server already supported `Promise<ToolResult>` handlers — no client-visible change beyond ordering, but third-party consumers of the raw exports need to `await` these calls now. All other tools stay synchronous.
+
+### Changed — Schema bumped to version 2
+
+The new `embeddings` `vec0` virtual table + `embedding_model` / `embedding_dim` fingerprints land via `src/db/migrations/002_vector.sql`. The migration is idempotent (`CREATE VIRTUAL TABLE IF NOT EXISTS`) and runs only after `sqlite-vec` successfully loads on the host — so the v1 DB layout remains untouched on platforms without vec.
+
+### Changed — Server-version drift fixed
+
+`SERVER_VERSION` in `src/server.ts` now reads `2.0.0` consistently with `package.json`, `server.json`, and `manifest.json`. (Same class of bug we fixed for v1.0.8 — pinning a regression-test now so a future bump can't silently drift again.)
+
+### Changed — Manifest tool inventory matches code
+
+`mcpb-build/manifest.json` previously listed two tools (`memory_summarize`, `memory_proactive`) that don't exist in the source. They are gone. The bundle now ships exactly the 17 tools you get over MCP.
+
+### Changed — README disambiguation against `local-memory-releases`
+
+Header note plus the scoped npm name pointer make clear this repo is **not affiliated** with the unrelated `danieleugenewilliams/local-memory-releases` Local Memory binary distribution. Always use the scoped `@studiomeyer/local-memory-mcp` package name.
+
+### Tests
+
+- New: `src/lib/embed.test.ts` — mock embedding determinism, L2 normalization, cosine sanity, multilingual handling, NFKD accent-strip, env-driven mode (mock / disabled / real).
+- New: `src/db/vector.test.ts` — sqlite-vec load + reload-after-close (the regression guard for the early v2 stale-cache bug), embeddings table KNN, DELETE-then-INSERT upsert contract, schema_version bump, embedding_model fingerprint.
+- Extended: `src/tools/search.test.ts` — hybrid / vector / fts mode tests, RRF score sanity, hybrid archive-filter, hybrid `types` filter, mode echo in response, schema accepts mode enum.
+- All previously sync test calls (`learn(…)`, `decide(…)`, `entityObserve(…)`, `search(…)`) updated to `await` since those entry points are now async.
+- Total: **120 tests** (was 88), all green on Linux x64 with sqlite-vec loaded.
+
+### Migration notes
+
+- The on-disk DB layout is forward-compatible: opening a v1 SQLite file with v2 simply adds the embeddings virtual table on first run. Existing rows are not retroactively embedded — only new writes get a vector. Run a one-shot reindex script (planned for v2.1) if you want full coverage.
+- If you ran v1 with a custom path (`MEMORY_DB_PATH=…`), keep it. If you used the OS default, keep it. The v2 upgrade is in-place.
+
+## [1.0.9] — 2026-05-28 (MCPB Foundation)
+
+Internal-only release that promoted the MCPB bundle work from "Unreleased" to a tagged release before the v2 jump. No API changes from v1.0.8.
 
 ### Added — MCPB bundle for one-click Claude Desktop install
 
@@ -9,9 +99,7 @@ Built a `.mcpb` bundle (MCP Bundle, the official Anthropic format for one-click 
 - `local-memory-mcp-1.0.8-linux-x64.mcpb` — 7.0 MB, ships the SQLite native binary for Linux x64. Users on Linux just double-click to install — no JSON editing, no `npm install`, no terminal.
 - Bundle pipeline scripted as `scripts/build-mcpb.sh` and the build directory `mcpb-build/` is `.gitignore`d to keep the repo clean.
 - Manifest schema validated with `mcpb validate` (`@anthropic-ai/mcpb@2.1.2`), pack via `mcpb pack`.
-- Platform note: only `linux-x64` for now because `better-sqlite3` is a native dependency and only that platform's `.node` binary is bundled. macOS/Windows users continue to use the `npx -y` install path (which rebuilds for the host). Multi-platform bundles via GitHub Actions matrix are a planned follow-up.
-
-Why MCPB matters: it closes the friction gap for non-developer users who can't edit `claude_desktop_config.json`. KMU customers, designers, and writers can install Local Memory by clicking a file — same UX as installing a desktop app. The repo also serves as the zero-config default for [darwin-agents](https://github.com/studiomeyer-io/darwin-agents), so reducing its install friction benefits the whole Darwin ecosystem.
+- Platform note (resolved in v2.0.0): only `linux-x64` was published in this release. v2.0.0 ships all four desktop platforms via GitHub Actions matrix.
 
 ## [1.0.8] — 2026-05-22
 

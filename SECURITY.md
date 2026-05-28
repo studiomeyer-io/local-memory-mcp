@@ -12,14 +12,30 @@ We will acknowledge your report within 48 hours and provide a fix timeline withi
 
 ## Threat Model
 
-`local-memory-mcp` is a single-user, local-only MCP server. It runs as a stdio process invoked by an MCP client on the same machine, stores all data in a single SQLite file under the user's local data directory, and never makes outbound network requests.
+`local-memory-mcp` is a single-user, local-only MCP server. It runs as a stdio process invoked by an MCP client on the same machine and stores all data in a single SQLite file under the user's local data directory.
 
-- **No network code.** No HTTP server, no fetch, no API calls. The process talks to its parent over stdio only.
+- **No network code in our source.** No HTTP server, no fetch, no API calls in `src/`. The process talks to its parent over stdio only.
 - **No shell execution.** No `child_process`, no `spawn`, no `execSync`, no `execFile`. The codebase has zero subprocess invocations. See "Known SAST scanner false positives" below.
 - **No telemetry.** No analytics, no phone-home, no crash reporting.
 - **Local filesystem only.** The SQLite file lives at `~/Library/Application Support/local-memory-mcp/memory.sqlite` (macOS), `~/.local/share/local-memory-mcp/memory.sqlite` (Linux), or `%APPDATA%\local-memory-mcp\memory.sqlite` (Windows). Override with `MEMORY_DB_PATH`.
 
 Privilege boundary: the server runs as the same user who started the MCP client. There is no privilege escalation surface.
+
+### v2.0.0 — one explicit network event (model download, opt-out)
+
+Hybrid retrieval depends on a local embedding model. The first time `embed()` runs, `@huggingface/transformers` will fetch the model files (default `Xenova/multilingual-e5-small`, ~30 MB q8 quantized) over HTTPS from `huggingface.co` and cache them under the Transformers.js cache directory (typically `~/.cache/huggingface/`). Subsequent calls are fully offline. The download is:
+
+- **Initiated by user activity** — only when the user (via their MCP client) calls a tool that triggers `embed()`. The server never preemptively reaches out.
+- **Opt-out** — set `MEMORY_EMBED_DISABLED=1` to force FTS5-only mode. No download happens, search still works (keyword only).
+- **Replaceable** — point `MEMORY_EMBED_MODEL=…` at a self-hosted or alternative feature-extraction model. Combine with `MEMORY_EMBED_CACHE_DIR=…` for an air-gapped pre-seeded cache.
+
+No analytics or identifiers are sent. The HTTPS request is to the Hugging Face Hub for the model artifacts only — this is the same fetch any Transformers.js consumer makes and is the only outbound network event the server can produce.
+
+### v2.0.0 — sqlite-vec native extension
+
+`sqlite-vec` is a native SQLite extension written in pure C ([`asg017/sqlite-vec`](https://github.com/asg017/sqlite-vec), MIT/Apache-2.0). It is loaded via `db.loadExtension` at boot. The prebuilt binary that ships in the matching npm package (e.g. `sqlite-vec-linux-x64`) is what gets loaded — it must be present, matching the host platform, and matching the better-sqlite3 ABI. If any of that fails, `loadVecExtension` catches the error, sets `vectorEnabled = false`, and the server runs in FTS5-only mode for the lifetime of the process. No fatal crash, no silent half-state.
+
+There is no path by which a user-supplied SQL query selects a different shared object or invokes loadExtension at runtime — `db.loadExtension` is called exactly once per Database connection, with a path determined by the `sqlite-vec` npm package itself.
 
 ## Known SAST Scanner False Positives
 
@@ -56,8 +72,13 @@ Runtime dependencies (audit-relevant):
 
 - `@modelcontextprotocol/sdk` — official MCP SDK
 - `better-sqlite3` — synchronous SQLite driver (native binding, no shell)
+- `sqlite-vec` — native SQLite vector-search extension (MIT/Apache-2.0, prebuilt platform binary)
+- `@huggingface/transformers` — Transformers.js, runs the local embedding model on CPU
 - `zod` — schema validation
 
 Dev dependencies are not shipped to users (`tsx`, `vitest`, `typescript`, `@types/*`).
 
-`npm audit` is run on every release.
+`npm audit` is run on every release. The two new v2 runtime deps were audited at v2.0.0 cut:
+
+- `sqlite-vec@0.1.9` — pure C, no transitive runtime deps, scoped to the SQLite extension surface.
+- `@huggingface/transformers@4.2.0` — pure JS + WASM backend, no native bindings. Brings in `onnxruntime-web` as a runtime transitive but it's used purely as a WASM execution provider — no network outside the explicit model fetch documented above.

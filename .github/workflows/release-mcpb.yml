@@ -1,0 +1,122 @@
+name: Release MCPB Bundles
+
+# Builds per-platform .mcpb bundles for one-click Claude Desktop install.
+# Triggered by pushing a v* tag (e.g. `git tag v2.0.0 && git push --tags`)
+# or manually via workflow_dispatch.
+#
+# Why a matrix: better-sqlite3 ships a native binary. The bundle has to
+# contain the binary for the user's platform, so we build once per target
+# and attach all four bundles to the GitHub Release.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing tag to attach bundles to (e.g. v2.0.0). Leave empty when triggered by a tag push.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build MCPB on ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+          - os: macos-13
+            label: darwin-x64
+          - os: macos-14
+            label: darwin-arm64
+          - os: windows-latest
+            label: win32-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # Install all deps (including better-sqlite3) for THIS platform —
+      # produces the correct prebuilt native binary in node_modules.
+      - name: Install deps
+        run: npm ci
+
+      - name: TypeScript build
+        run: npm run build
+
+      # Run the unit tests with mock embeddings so we get a green signal
+      # per-platform without pulling the 120 MB model into CI.
+      - name: Tests (mock embeddings)
+        env:
+          MEMORY_EMBED_MOCK: '1'
+        run: npm test
+
+      - name: Build MCPB bundle (bash, *nix)
+        if: runner.os != 'Windows'
+        run: bash scripts/build-mcpb.sh
+
+      - name: Build MCPB bundle (PowerShell, Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bash scripts/build-mcpb.sh
+
+      - name: List bundle artifacts
+        shell: bash
+        run: ls -lh local-memory-mcp-*.mcpb || dir local-memory-mcp-*.mcpb
+
+      - name: Upload bundle as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-memory-mcp-${{ matrix.label }}
+          path: local-memory-mcp-*.mcpb
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Attach bundles to GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all bundle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -name '*.mcpb' -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            echo "tag=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: release/*.mcpb
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

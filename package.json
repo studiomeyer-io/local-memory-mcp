@@ -1,7 +1,7 @@
 {
   "name": "@studiomeyer/local-memory-mcp",
-  "version": "1.0.8",
-  "description": "Persistent local memory for any MCP client. SQLite, FTS5, Knowledge Graph. No cloud, no API keys.",
+  "version": "2.0.0",
+  "description": "Persistent local memory for any MCP client. SQLite + FTS5 + sqlite-vec hybrid retrieval. Multilingual embeddings. Knowledge Graph. No cloud, no API keys.",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
@@ -14,6 +14,7 @@
   "files": [
     "dist",
     "dist/db/schema.sql",
+    "dist/db/migrations/002_vector.sql",
     "README.md",
     "LICENSE"
   ],
@@ -22,6 +23,10 @@
     "memory",
     "local-first",
     "sqlite",
+    "sqlite-vec",
+    "vector-search",
+    "hybrid-search",
+    "rrf",
     "knowledge-graph",
     "claude",
     "cursor",
@@ -29,7 +34,10 @@
     "continue",
     "ai-memory",
     "persistent-memory",
-    "model-context-protocol"
+    "model-context-protocol",
+    "embeddings",
+    "multilingual",
+    "transformers-js"
   ],
   "repository": {
     "type": "git",
@@ -42,15 +50,18 @@
     "url": "https://studiomeyer.io"
   },
   "scripts": {
-    "build": "tsc && cp src/db/schema.sql dist/db/schema.sql && chmod +x dist/server.js",
+    "build": "tsc && cp src/db/schema.sql dist/db/schema.sql && mkdir -p dist/db/migrations && cp src/db/migrations/*.sql dist/db/migrations/ && chmod +x dist/server.js",
     "dev": "tsx src/server.ts",
-    "test": "vitest run",
+    "test": "MEMORY_EMBED_MOCK=1 vitest run",
+    "test:watch": "MEMORY_EMBED_MOCK=1 vitest",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.9.0",
+    "sqlite-vec": "^0.1.9",
     "zod": "^3.23.8"
   },
   "devDependencies": {

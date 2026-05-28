@@ -101,7 +101,7 @@ describe('entityObserve', () => {
     const created = entityCreate({ name: 'Server', entityType: 'infrastructure' });
     if (!created.success) throw new Error('setup failed');
     const id = (created.data as { id: string }).id;
-    const obs = entityObserve({ entityId: id, content: 'Disk at 77%' });
+    const obs = await entityObserve({ entityId: id, content: 'Disk at 77%' });
     expect(obs.success).toBe(true);
 
     const open = entityOpen({ id });
@@ -114,7 +114,7 @@ describe('entityObserve', () => {
 
   it('auto-creates the entity when observing by name+type', async () => {
     const { entityObserve, entityOpen } = await import('./entity.js');
-    const obs = entityObserve({
+    const obs = await entityObserve({
       entityName: 'NewThing',
       entityType: 'tool',
       content: 'first observation',
@@ -131,7 +131,7 @@ describe('entityObserve', () => {
 
   it('fails with MISSING_ENTITY_REF when neither id nor name+type is passed', async () => {
     const { entityObserve } = await import('./entity.js');
-    const obs = entityObserve({ content: 'orphan' });
+    const obs = await entityObserve({ content: 'orphan' });
     expect(obs.success).toBe(false);
     if (!obs.success) {
       expect(obs.code).toBe('MISSING_ENTITY_REF');
@@ -140,7 +140,7 @@ describe('entityObserve', () => {
 
   it('fails with MISSING_ENTITY_REF when only name is passed without type', async () => {
     const { entityObserve } = await import('./entity.js');
-    const obs = entityObserve({ entityName: 'Foo', content: 'hi' });
+    const obs = await entityObserve({ entityName: 'Foo', content: 'hi' });
     expect(obs.success).toBe(false);
     if (!obs.success) {
       expect(obs.code).toBe('MISSING_ENTITY_REF');
@@ -160,7 +160,7 @@ describe('entityObserve', () => {
     db.prepare("UPDATE entities SET updated_at = datetime('now', '-1 day') WHERE id = ?").run(id);
     const before = (db.prepare('SELECT updated_at FROM entities WHERE id = ?').get(id) as { updated_at: string }).updated_at;
 
-    entityObserve({ entityId: id, content: 'new fact' });
+    await entityObserve({ entityId: id, content: 'new fact' });
 
     const open = entityOpen({ id });
     if (open.success) {
@@ -181,7 +181,7 @@ describe('entityObserve', () => {
     const created = entityCreate({ name: 'SrcTest', entityType: 'concept' });
     if (!created.success) throw new Error('setup failed');
     const id = (created.data as { id: string }).id;
-    const obs = entityObserve({
+    const obs = await entityObserve({
       entityId: id,
       content: 'from a book',
       source: 'library',
@@ -215,7 +215,7 @@ describe('entitySearch', () => {
     const { entityCreate, entityObserve, entitySearch } = await import('./entity.js');
     const created = entityCreate({ name: 'Alpha', entityType: 'project' });
     if (!created.success) throw new Error('setup failed');
-    entityObserve({ entityId: (created.data as { id: string }).id, content: 'runs on kubernetes' });
+    await entityObserve({ entityId: (created.data as { id: string }).id, content: 'runs on kubernetes' });
     const result = entitySearch({ query: 'kubernetes' });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -244,12 +244,12 @@ describe('entitySearch', () => {
     const tool = entityCreate({ name: 'SynthA', entityType: 'tool', summary: 'x' });
     const person = entityCreate({ name: 'SynthB', entityType: 'person', summary: 'y' });
     if (!tool.success || !person.success) throw new Error('setup failed');
-    entityObserve({
+    await entityObserve({
       entityName: 'SynthA',
       entityType: 'tool',
       content: 'mentions Zepto-Observation explicitly',
     });
-    entityObserve({
+    await entityObserve({
       entityName: 'SynthB',
       entityType: 'person',
       content: 'mentions Zepto-Observation explicitly',
@@ -292,7 +292,7 @@ describe('entitySearch', () => {
   it('returns an observation-only hit when the entity name does not match', async () => {
     const { entityCreate, entityObserve, entitySearch } = await import('./entity.js');
     entityCreate({ name: 'UnrelatedName', entityType: 'tool', summary: 'something else' });
-    entityObserve({
+    await entityObserve({
       entityName: 'UnrelatedName',
       entityType: 'tool',
       content: 'this observation references ObsOnlyKeyword quite clearly',
@@ -309,7 +309,7 @@ describe('entitySearch', () => {
   it('FTS search is case-insensitive on both name and observation legs', async () => {
     const { entityCreate, entityObserve, entitySearch } = await import('./entity.js');
     entityCreate({ name: 'MixedCaseName', entityType: 'project', summary: 'summaryTEXT' });
-    entityObserve({
+    await entityObserve({
       entityName: 'MixedCaseName',
       entityType: 'project',
       content: 'observation with MixedKeywordExample inside',
@@ -374,8 +374,8 @@ describe('entityOpen', () => {
     if (!a.success || !b.success) throw new Error('setup failed');
     const aid = (a.data as { id: string }).id;
     const bid = (b.data as { id: string }).id;
-    entityObserve({ entityId: aid, content: 'obs one' });
-    entityObserve({ entityId: aid, content: 'obs two' });
+    await entityObserve({ entityId: aid, content: 'obs one' });
+    await entityObserve({ entityId: aid, content: 'obs two' });
     entityRelate({ fromEntityId: aid, toEntityId: bid, relationType: 'connects_to' });
 
     const open = entityOpen({ id: aid });
@@ -428,8 +428,8 @@ describe('entityOpen', () => {
     const created = entityCreate({ name: 'Temporal', entityType: 'concept' });
     if (!created.success) throw new Error('setup failed');
     const id = (created.data as { id: string }).id;
-    entityObserve({ entityId: id, content: 'active fact' });
-    entityObserve({ entityId: id, content: 'retired fact' });
+    await entityObserve({ entityId: id, content: 'active fact' });
+    await entityObserve({ entityId: id, content: 'retired fact' });
 
     // Retire one observation by setting valid_to.
     getDb()
@@ -453,7 +453,7 @@ describe('entityOpen', () => {
     const created = entityCreate({ name: 'TriggerHost', entityType: 'project' });
     if (!created.success) throw new Error('setup failed');
     const eid = (created.data as { id: string }).id;
-    const obs = entityObserve({ entityId: eid, content: 'original text with snowleopard' });
+    const obs = await entityObserve({ entityId: eid, content: 'original text with snowleopard' });
     if (!obs.success) throw new Error('setup failed');
     const oid = (obs.data as { observationId: string }).observationId;
 
@@ -601,7 +601,7 @@ describe('entityDelete', () => {
     if (!a.success || !b.success) throw new Error('setup failed');
     const aid = (a.data as { id: string }).id;
     const bid = (b.data as { id: string }).id;
-    entityObserve({ entityId: aid, content: 'will vanish' });
+    await entityObserve({ entityId: aid, content: 'will vanish' });
     entityRelate({ fromEntityId: aid, toEntityId: bid, relationType: 'uses' });
 
     entityDelete({ id: aid });
@@ -615,5 +615,40 @@ describe('entityDelete', () => {
       .get(aid, aid) as { c: number };
     expect(obsLeft.c).toBe(0);
     expect(relLeft.c).toBe(0);
+  });
+
+  it('F3 fix: cascades observation embeddings when the entity is deleted', async () => {
+    // Regression guard for the Critic R1 finding: entity_delete must also
+    // remove the vector rows whose content_id matches the deleted entity's
+    // observations. Previously those rows became unreachable ghosts because
+    // sqlite-vec is outside the FK graph (vec0 doesn't model FKs).
+    const { entityCreate, entityObserve, entityDelete } = await import('./entity.js');
+    const { getDb } = await import('../db/client.js');
+    const { isVectorEnabled } = await import('../db/vector.js');
+    if (!isVectorEnabled()) return;
+
+    const e = entityCreate({ name: 'Ghost', entityType: 'tool' });
+    if (!e.success) throw new Error('setup failed');
+    const eid = (e.data as { id: string }).id;
+    const obs1 = await entityObserve({ entityId: eid, content: 'observation alpha for cascade test' });
+    const obs2 = await entityObserve({ entityId: eid, content: 'observation beta for cascade test' });
+    if (!obs1.success || !obs2.success) throw new Error('observe failed');
+    const obsId1 = (obs1.data as { observationId: string }).observationId;
+    const obsId2 = (obs2.data as { observationId: string }).observationId;
+
+    const db = getDb();
+    // Sanity check: embeddings exist before delete.
+    const before = db
+      .prepare('SELECT content_id FROM embeddings WHERE content_id IN (?, ?)')
+      .all(obsId1, obsId2) as Array<{ content_id: string }>;
+    expect(before.length).toBe(2);
+
+    entityDelete({ id: eid });
+
+    // After delete: zero embedding rows for those observation ids.
+    const after = db
+      .prepare('SELECT content_id FROM embeddings WHERE content_id IN (?, ?)')
+      .all(obsId1, obsId2) as Array<{ content_id: string }>;
+    expect(after.length).toBe(0);
   });
 });

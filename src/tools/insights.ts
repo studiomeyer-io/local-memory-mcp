@@ -2,13 +2,15 @@
  * Insights, health, profile, guide — the "reflective" tools.
  *
  * insights: stats + what Claude has learned about the user
- * health:   DB size, counts, integrity
+ * health:   DB size, counts, integrity, vector status (v2.0.0+)
  * profile:  read/write user profile (stored in meta)
  * goal:     current goal (stored in meta)
  * guide:    embedded how-to text, per topic
  */
 import { z } from 'zod';
 import { getDb } from '../db/client.js';
+import { vectorStatus } from '../db/vector.js';
+import { embedMode, embedModelId, EMBEDDING_DIM } from '../lib/embed.js';
 import type { ToolResult } from '../lib/types.js';
 
 // ─── insights ────────────────────────────────────────
@@ -72,6 +74,20 @@ export function health(): ToolResult {
   const pageSize = (db.pragma('page_size', { simple: true }) as number) ?? 0;
   const sizeBytes = pageCount * pageSize;
 
+  // v2.0.0+: surface vector + embedding status so users can see whether
+  // hybrid mode is live or we're running FTS5-only. embeddingsCount is
+  // pulled defensively — if the virtual table doesn't exist we report 0.
+  const vec = vectorStatus();
+  let embeddingsCount = 0;
+  if (vec.enabled) {
+    try {
+      const row = db.prepare('SELECT COUNT(*) AS c FROM embeddings').get() as { c: number } | undefined;
+      embeddingsCount = row?.c ?? 0;
+    } catch {
+      embeddingsCount = 0;
+    }
+  }
+
   return {
     success: true,
     data: {
@@ -80,8 +96,20 @@ export function health(): ToolResult {
       sizeMB: Math.round((sizeBytes / 1024 / 1024) * 100) / 100,
       schemaVersion: (db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined)?.value ?? 'unknown',
       firstRunAt: (db.prepare("SELECT value FROM meta WHERE key = 'first_run_at'").get() as { value: string } | undefined)?.value ?? null,
+      vector: {
+        enabled: vec.enabled,
+        error: vec.error,
+        embeddingsCount,
+        dim: EMBEDDING_DIM,
+      },
+      embedding: {
+        mode: embedMode(),
+        model: embedModelId(),
+      },
     },
-    message: integrity === 'ok' ? 'Alles gesund.' : `Integrity issue: ${integrity}`,
+    message: integrity === 'ok'
+      ? `Alles gesund. Hybrid: ${vec.enabled && embedMode() !== 'disabled' ? 'on' : 'off (FTS5-only)'}.`
+      : `Integrity issue: ${integrity}`,
   };
 }
 

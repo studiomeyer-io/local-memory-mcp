@@ -5,10 +5,23 @@
  *   1. Check for exact duplicate content → SKIP (return existing).
  *   2. Check for very similar content via FTS5 + length heuristic → UPDATE existing.
  *   3. Otherwise → INSERT new.
+ *
+ * v2.0.0+: after a successful INSERT or UPDATE we hand the content to the
+ * local embedding pipeline and upsert the resulting 384-dim vector into the
+ * sqlite-vec `embeddings` table. The pattern is "compute embedding outside
+ * the transaction, then commit row + embedding atomically inside one
+ * transaction" so a process crash between the row write and the embedding
+ * write cannot leave an orphan (F4 fix from Critic R1).
  */
 import { z } from 'zod';
 import { getDb, newId, nowIso, escapeFtsQuery } from '../db/client.js';
+import { prepareEmbedding, writeEmbeddingSync, upsertEmbedding } from '../db/vector.js';
 import type { ToolResult, MemoryType, LearningCategory } from '../lib/types.js';
+
+// Re-export upsertEmbedding so existing test imports (`from './learn.js'`)
+// keep working. The canonical home is `db/vector.ts` (C1 refactor from
+// Analyst R1) — this alias prevents test churn for the rename.
+export { upsertEmbedding };
 
 const LEARNING_CATEGORIES: LearningCategory[] = [
   'pattern', 'mistake', 'insight', 'research', 'architecture',
@@ -41,7 +54,7 @@ function classifyMemoryType(content: string, category: LearningCategory): Memory
   return 'semantic';
 }
 
-export function learn(input: z.infer<typeof learnSchema>): ToolResult {
+export async function learn(input: z.infer<typeof learnSchema>): Promise<ToolResult> {
   const db = getDb();
 
   // Gatekeeper: check for exact duplicate
@@ -82,9 +95,16 @@ export function learn(input: z.infer<typeof learnSchema>): ToolResult {
     if (similar && similar.score < -5) {
       const lenDiff = Math.abs(similar.content.length - input.content.length);
       if (lenDiff > 50 && input.content.length > similar.content.length) {
-        db.prepare(
-          'UPDATE learnings SET content = ?, usage_count = usage_count + 1, last_used = ?, confidence = ? WHERE id = ?'
-        ).run(input.content, nowIso(), input.confidence ?? 0.7, similar.id);
+        // Atomic update: compute the new embedding outside the transaction,
+        // then UPDATE the row + write the embedding in one sync transaction.
+        const vec = await prepareEmbedding(input.content);
+        const tx = db.transaction(() => {
+          db.prepare(
+            'UPDATE learnings SET content = ?, usage_count = usage_count + 1, last_used = ?, confidence = ? WHERE id = ?'
+          ).run(input.content, nowIso(), input.confidence ?? 0.7, similar.id);
+          writeEmbeddingSync(db, similar.id, 'learning', vec);
+        });
+        tx();
         return {
           success: true,
           data: { id: similar.id, action: 'updated_similar', usageCount: similar.usage_count + 1 },
@@ -98,25 +118,32 @@ export function learn(input: z.infer<typeof learnSchema>): ToolResult {
     process.stderr.write(`[local-memory] FTS5 similarity check failed: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 
-  // Insert new
+  // Atomic insert: compute embedding outside any transaction, then INSERT row
+  // + INSERT embedding in one sync transaction. Either both commit or both
+  // roll back — no orphan rows on crash (F4).
   const id = newId();
   const memoryType = input.memoryType ?? classifyMemoryType(input.content, input.category);
+  const vec = await prepareEmbedding(input.content);
 
-  db.prepare(
-    `INSERT INTO learnings
-     (id, date, category, content, project, tags_json, confidence, source, memory_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    id,
-    nowIso(),
-    input.category,
-    input.content,
-    input.project ?? null,
-    JSON.stringify(input.tags ?? []),
-    input.confidence ?? 0.7,
-    input.source ?? null,
-    memoryType
-  );
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO learnings
+       (id, date, category, content, project, tags_json, confidence, source, memory_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      nowIso(),
+      input.category,
+      input.content,
+      input.project ?? null,
+      JSON.stringify(input.tags ?? []),
+      input.confidence ?? 0.7,
+      input.source ?? null,
+      memoryType
+    );
+    writeEmbeddingSync(db, id, 'learning', vec);
+  });
+  tx();
 
   return {
     success: true,

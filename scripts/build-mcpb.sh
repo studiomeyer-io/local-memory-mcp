@@ -43,15 +43,27 @@ mkdir -p mcpb-build-deps
 (
   cd mcpb-build-deps
   npm init -y > /dev/null
-  # Pin to the same versions package.json declares for production.
+  # Pin to the same versions package.json declares for production. ALL five
+  # runtime deps must be installed here — omitting transformers or sqlite-vec
+  # would leave the bundle unable to do hybrid search (the imports would fail
+  # at load-time and the server would silently degrade to FTS5-only, which
+  # defeats the v2 install-via-double-click value proposition).
   SDK_VER="$(node -p "require('../package.json').dependencies['@modelcontextprotocol/sdk']")"
   SQLITE_VER="$(node -p "require('../package.json').dependencies['better-sqlite3']")"
   ZOD_VER="$(node -p "require('../package.json').dependencies['zod']")"
+  VEC_VER="$(node -p "require('../package.json').dependencies['sqlite-vec']")"
+  HF_VER="$(node -p "require('../package.json').dependencies['@huggingface/transformers']")"
+  # --save-exact pins to an exact version so two runs of this script don't
+  # accidentally pick up a new minor (Analyst R2 #3). Combined with
+  # --no-package-lock that's "resolve once, pin once", which is what we want
+  # for a per-platform bundle that ships native binaries.
   npm install \
-    --omit=dev --no-audit --no-fund --no-package-lock \
+    --omit=dev --no-audit --no-fund --no-package-lock --save-exact \
     "@modelcontextprotocol/sdk@${SDK_VER}" \
     "better-sqlite3@${SQLITE_VER}" \
     "zod@${ZOD_VER}" \
+    "sqlite-vec@${VEC_VER}" \
+    "@huggingface/transformers@${HF_VER}" \
     > /dev/null
 )
 cp -r mcpb-build-deps/node_modules mcpb-build/

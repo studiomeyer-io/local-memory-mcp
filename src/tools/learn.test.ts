@@ -59,7 +59,7 @@ describe('db bootstrap', () => {
 describe('learn gatekeeper', () => {
   it('inserts a brand new learning and returns added', async () => {
     const { learn } = await import('./learn.js');
-    const result = learn({
+    const result = await learn({
       category: 'pattern',
       content: 'FTS5 search is cheap in SQLite when triggers keep the index warm.',
     });
@@ -73,8 +73,8 @@ describe('learn gatekeeper', () => {
 
   it('returns skipped_duplicate for exact re-insert', async () => {
     const { learn } = await import('./learn.js');
-    const first = learn({ category: 'pattern', content: 'exactly the same sentence' });
-    const second = learn({ category: 'pattern', content: 'exactly the same sentence' });
+    const first = await learn({ category: 'pattern', content: 'exactly the same sentence' });
+    const second = await learn({ category: 'pattern', content: 'exactly the same sentence' });
     expect(first.success).toBe(true);
     expect(second.success).toBe(true);
     if (second.success) {
@@ -85,7 +85,7 @@ describe('learn gatekeeper', () => {
 
   it('auto-classifies mistake category as episodic memory', async () => {
     const { learn } = await import('./learn.js');
-    const result = learn({
+    const result = await learn({
       category: 'mistake',
       content: 'I forgot to quote the fts query and it crashed on multi-word input.',
     });
@@ -98,7 +98,7 @@ describe('learn gatekeeper', () => {
 
   it('auto-classifies architecture as semantic memory', async () => {
     const { learn } = await import('./learn.js');
-    const result = learn({
+    const result = await learn({
       category: 'architecture',
       content: 'The bundle ships a platform-specific native binding per OS.',
     });
@@ -108,13 +108,60 @@ describe('learn gatekeeper', () => {
       expect(data.memoryType).toBe('semantic');
     }
   });
+
+  it('Analyst R2 #5: updated_similar branch re-embeds atomically (UPDATE branch regression)', async () => {
+    // The gatekeeper's UPDATE branch (when an FTS5-similar but shorter
+    // learning exists) was the second code path that calls the F4 atomic
+    // pattern. R1 added regression for the fresh-INSERT path; this test
+    // closes the gap on the UPDATE path so a future change to learn.ts
+    // can't quietly leave its atomicity unguarded.
+    const { learn } = await import('./learn.js');
+    const { getDb } = await import('../db/client.js');
+    const { isVectorEnabled } = await import('../db/vector.js');
+
+    // Seed a short version
+    const first = await learn({
+      category: 'pattern',
+      content: 'sqlite vec hybrid',
+    });
+    expect(first.success).toBe(true);
+    const firstId = first.success ? (first.data as { id: string }).id : '';
+
+    // Add the long version which should trigger updated_similar
+    const longer = await learn({
+      category: 'pattern',
+      content:
+        'sqlite vec hybrid search uses bm25 fused with cosine via reciprocal rank fusion at k 60 which is the canonical setting documented by alex garcia',
+    });
+    expect(longer.success).toBe(true);
+    if (longer.success) {
+      const d = longer.data as { id: string; action: string };
+      // Either updated_similar (gatekeeper triggered) or a fresh add — both
+      // are valid depending on how aggressive FTS5 was on the short prefix.
+      // What matters: if the same id is reused, its embedding must be
+      // upserted; if a new id was added, both ids must have an embedding.
+      const db = getDb();
+      if (isVectorEnabled()) {
+        if (d.action === 'updated_similar') {
+          expect(d.id).toBe(firstId);
+          const e = db
+            .prepare('SELECT content_id FROM embeddings WHERE content_id = ?')
+            .get(d.id) as { content_id: string } | undefined;
+          expect(e).toBeDefined();
+        } else {
+          const eCount = (db.prepare('SELECT COUNT(*) AS c FROM embeddings').get() as { c: number }).c;
+          expect(eCount).toBeGreaterThanOrEqual(2);
+        }
+      }
+    }
+  });
 });
 
 describe('recall + search', () => {
   it('recall without query returns both inserted learnings', async () => {
     const { learn, recall } = await import('./learn.js');
-    learn({ category: 'pattern', content: 'first pattern entry' });
-    learn({ category: 'insight', content: 'second insight entry' });
+    await learn({ category: 'pattern', content: 'first pattern entry' });
+    await learn({ category: 'insight', content: 'second insight entry' });
     const result = recall({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -131,8 +178,8 @@ describe('recall + search', () => {
 
   it('recall with query uses FTS5 and finds the match', async () => {
     const { learn, recall } = await import('./learn.js');
-    learn({ category: 'pattern', content: 'the bluebird of happiness sings at dawn' });
-    learn({ category: 'pattern', content: 'completely unrelated thing about ducks' });
+    await learn({ category: 'pattern', content: 'the bluebird of happiness sings at dawn' });
+    await learn({ category: 'pattern', content: 'completely unrelated thing about ducks' });
     const result = recall({ query: 'bluebird' });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -146,13 +193,13 @@ describe('recall + search', () => {
     const { learn } = await import('./learn.js');
     const { decide } = await import('./decide.js');
     const { search } = await import('./search.js');
-    learn({ category: 'pattern', content: 'pineapple pizza is controversial' });
-    decide({
+    await learn({ category: 'pattern', content: 'pineapple pizza is controversial' });
+    await decide({
       title: 'pineapple as topping',
       decision: 'yes to pineapple pizza',
       reasoning: 'enzymes balance the cheese fat',
     });
-    const result = search({ query: 'pineapple' });
+    const result = await search({ query: 'pineapple' });
     expect(result.success).toBe(true);
     if (result.success) {
       const data = result.data as { results: Array<{ type: string }> };

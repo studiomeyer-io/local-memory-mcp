@@ -4,9 +4,15 @@
  * Entities are nodes: Person, Project, Company, Tool, Concept, etc.
  * Observations are bi-temporal facts about an entity.
  * Relations are typed, directed edges between entities.
+ *
+ * v2.0.0+: observations get auto-embedded so memory_search's hybrid mode can
+ * surface them via cosine similarity to a natural-language query. Entities
+ * themselves are not embedded — they're typically just a name plus a short
+ * summary, and the linked observations cover the semantic surface.
  */
 import { z } from 'zod';
 import { getDb, newId, nowIso, escapeFtsQuery } from '../db/client.js';
+import { prepareEmbedding, writeEmbeddingSync, deleteEmbeddings } from '../db/vector.js';
 import type { ToolResult } from '../lib/types.js';
 
 // ─── entity_create ───────────────────────────────────
@@ -65,7 +71,7 @@ export const entityObserveSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
 });
 
-export function entityObserve(input: z.infer<typeof entityObserveSchema>): ToolResult {
+export async function entityObserve(input: z.infer<typeof entityObserveSchema>): Promise<ToolResult> {
   const db = getDb();
 
   // Resolve entity id (either by id, or by name+type — create if missing)
@@ -86,14 +92,21 @@ export function entityObserve(input: z.infer<typeof entityObserveSchema>): ToolR
     entityId = (created.data as { id: string }).id;
   }
 
+  // F4 atomic pattern: pre-embed outside the transaction (async), then write
+  // observation row + entity timestamp bump + embedding in one sync tx so a
+  // crash can't leave an FTS row without a vector or vice versa.
   const id = newId();
-  db.prepare(
-    `INSERT INTO entity_observations (id, entity_id, content, source, confidence)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(id, entityId, input.content, input.source ?? null, input.confidence ?? 0.7);
+  const vec = await prepareEmbedding(input.content);
 
-  // Bump entity updated_at
-  db.prepare('UPDATE entities SET updated_at = ? WHERE id = ?').run(nowIso(), entityId);
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO entity_observations (id, entity_id, content, source, confidence)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(id, entityId, input.content, input.source ?? null, input.confidence ?? 0.7);
+    db.prepare('UPDATE entities SET updated_at = ? WHERE id = ?').run(nowIso(), entityId);
+    writeEmbeddingSync(db, id, 'observation', vec);
+  });
+  tx();
 
   return {
     success: true,
@@ -295,6 +308,24 @@ export function entityDelete(input: z.infer<typeof entityDeleteSchema>): ToolRes
   if (!exists) {
     return { success: false, error: 'Entity not found.', code: 'NOT_FOUND' };
   }
-  db.prepare('DELETE FROM entities WHERE id = ?').run(input.id);
+
+  // F3 cascade fix (Critic R1): collect the observation ids attached to this
+  // entity BEFORE the FK-cascade removes them, then sweep their embeddings.
+  // sqlite-vec's `embeddings` virtual table is not part of the FK graph (vec0
+  // doesn't model foreign keys), so the ON DELETE CASCADE on
+  // `entity_observations` cleans the FTS row and the source row but leaves
+  // ghost vectors. Manual cleanup keeps the vector index in sync.
+  const observationIds = (
+    db
+      .prepare('SELECT id FROM entity_observations WHERE entity_id = ?')
+      .all(input.id) as Array<{ id: string }>
+  ).map((row) => row.id);
+
+  const tx = db.transaction(() => {
+    deleteEmbeddings(observationIds, db);
+    db.prepare('DELETE FROM entities WHERE id = ?').run(input.id);
+  });
+  tx();
+
   return { success: true, data: { id: input.id }, message: 'Entity und zugehörige Daten gelöscht.' };
 }
