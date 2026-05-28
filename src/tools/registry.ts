@@ -11,7 +11,12 @@ import { z } from 'zod';
 import type { ToolResult } from '../lib/types.js';
 
 import { sessionStart, sessionStartSchema, sessionEnd, sessionEndSchema } from './session.js';
-import { learn, learnSchema, recall, recallSchema } from './learn.js';
+import {
+  learn, learnSchema,
+  recall, recallSchema,
+  learnArchive, learnArchiveSchema,
+  learnUpdate, learnUpdateSchema,
+} from './learn.js';
 import { search, searchSchema } from './search.js';
 import { decide, decideSchema } from './decide.js';
 import {
@@ -22,6 +27,8 @@ import {
   entityRelate, entityRelateSchema,
   entityDelete, entityDeleteSchema,
 } from './entity.js';
+import { contradictions, contradictionsSchema } from './contradictions.js';
+import { reflect, reflectSchema } from './reflect.js';
 import {
   insights, insightsSchema,
   profile, profileSchema,
@@ -66,6 +73,18 @@ export const TOOLS: ToolDef[] = [
     handler: (input) => recall(input as z.infer<typeof recallSchema>),
   },
   {
+    name: 'memory_learn_archive',
+    description: 'Soft-delete a learning. Row stays for asOf-style queries; never resurfaces in recall/search. Optional reason.',
+    schema: learnArchiveSchema,
+    handler: (input) => learnArchive(input as z.infer<typeof learnArchiveSchema>),
+  },
+  {
+    name: 'memory_learn_update',
+    description: 'Edit a live learning (content, confidence, tags). Re-embeds atomically when content changes.',
+    schema: learnUpdateSchema,
+    handler: (input) => learnUpdate(input as z.infer<typeof learnUpdateSchema>),
+  },
+  {
     name: 'memory_search',
     description: 'Unified search across learnings, decisions, entities, and observations (FTS5 + bm25).',
     schema: searchSchema,
@@ -97,7 +116,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'memory_entity_open',
-    description: 'Load an entity with all its current observations and relations.',
+    description: 'Load an entity with all its current observations and relations. Pass `asOf` (ISO date) for a bi-temporal point-in-time view.',
     schema: entityOpenSchema,
     handler: (input) => entityOpen(input as z.infer<typeof entityOpenSchema>),
   },
@@ -112,6 +131,18 @@ export const TOOLS: ToolDef[] = [
     description: 'Delete an entity and all its observations + relations. Destructive — use with care.',
     schema: entityDeleteSchema,
     handler: (input) => entityDelete(input as z.infer<typeof entityDeleteSchema>),
+  },
+  {
+    name: 'memory_contradictions',
+    description: 'Scan observation pairs with high cosine similarity but disagreeing negation/confidence. LLM-free heuristic. Requires sqlite-vec.',
+    schema: contradictionsSchema,
+    handler: (input) => contradictions(input as z.infer<typeof contradictionsSchema>),
+  },
+  {
+    name: 'memory_reflect',
+    description: 'LLM-free reflection across recent memory: most-used + stale learnings, hot entities, open decisions. Returns structured data + markdown.',
+    schema: reflectSchema,
+    handler: (input) => reflect(input as z.infer<typeof reflectSchema>),
   },
   {
     name: 'memory_insights',

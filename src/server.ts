@@ -24,7 +24,7 @@ import { closeDb, getDb } from './db/client.js';
 import { getHandler, toMcpToolList, TOOLS } from './tools/registry.js';
 
 const SERVER_NAME = 'local-memory-mcp';
-const SERVER_VERSION = '2.0.0';
+const SERVER_VERSION = '2.1.0';
 
 const INSTRUCTIONS = `Local Memory — Persistent memory for your AI assistant.
 
@@ -47,7 +47,22 @@ SEARCH (v2.0.0+):
   multilingual-e5-small model (DE / EN / ES / 100+ languages). If the
   vector extension can't load, search falls back to FTS5 transparently.
 
-17 tools available. Call memory_guide() for help on any topic.`;
+LIFECYCLE (v2.1.0+):
+  - memory_entity_open({asOf: "2026-04-15"}) — bi-temporal point-in-time
+    view. Returns observations whose validity window contained that
+    instant. "What did I know at this date?"
+  - memory_contradictions() — LLM-free scanner: surfaces observation
+    pairs with high cosine similarity but disagreeing negation or
+    confidence. Requires sqlite-vec.
+  - memory_learn_archive({learningId, reason?}) — soft-delete a
+    learning. Row stays for asOf queries; never resurfaces in search.
+  - memory_learn_update({learningId, content?, confidence?, tags?}) —
+    edit a live learning; re-embeds atomically when content changes.
+  - memory_reflect({lookbackDays?: 7}) — aggregation pass that surfaces
+    most-used + stale learnings, hot entities, open decisions. Returns
+    structured data PLUS markdown summary. No LLM call. Cheap to run.
+
+21 tools available. Call memory_guide() for help on any topic.`;
 
 process.stderr.write('[local-memory] imports loaded, bootstrapping db…\n');
 

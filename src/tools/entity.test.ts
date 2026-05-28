@@ -444,6 +444,221 @@ describe('entityOpen', () => {
     }
   });
 
+  // ─── P3.1 v2.1.0 — asOf bi-temporal query ──────────
+
+  it('asOf returns observations valid at that instant (in-window + closed-window)', async () => {
+    // Three observations on the same entity with carefully set valid_from /
+    // valid_to spans. The asOf query must return only those whose validity
+    // window contains the asOf timestamp.
+    const { entityCreate, entityObserve, entityOpen } = await import('./entity.js');
+    const { getDb } = await import('../db/client.js');
+    const created = entityCreate({ name: 'TimelineEntity', entityType: 'person' });
+    if (!created.success) throw new Error('setup failed');
+    const eid = (created.data as { id: string }).id;
+
+    // We'll observe three facts and then manually rewrite valid_from / valid_to
+    // so the test is independent of wall-clock.
+    const o1 = await entityObserve({ entityId: eid, content: 'fact A (old, now retired)' });
+    const o2 = await entityObserve({ entityId: eid, content: 'fact B (still current)' });
+    const o3 = await entityObserve({ entityId: eid, content: 'fact C (added later)' });
+    if (!o1.success || !o2.success || !o3.success) throw new Error('observe failed');
+    const id1 = (o1.data as { observationId: string }).observationId;
+    const id2 = (o2.data as { observationId: string }).observationId;
+    const id3 = (o3.data as { observationId: string }).observationId;
+
+    const db = getDb();
+    // Layout (all UTC):
+    //   o1: valid_from 2026-01-01, valid_to 2026-03-01  → retired
+    //   o2: valid_from 2026-02-01, valid_to NULL        → still live
+    //   o3: valid_from 2026-04-01, valid_to NULL        → added later
+    db.prepare('UPDATE entity_observations SET valid_from = ?, valid_to = ? WHERE id = ?')
+      .run('2026-01-01 00:00:00', '2026-03-01 00:00:00', id1);
+    db.prepare('UPDATE entity_observations SET valid_from = ?, valid_to = NULL WHERE id = ?')
+      .run('2026-02-01 00:00:00', id2);
+    db.prepare('UPDATE entity_observations SET valid_from = ?, valid_to = NULL WHERE id = ?')
+      .run('2026-04-01 00:00:00', id3);
+
+    // asOf 2026-02-15: o1 (still live, valid_to in future) + o2 (live), NO o3 (not yet).
+    const at0215 = entityOpen({ id: eid, asOf: '2026-02-15' });
+    expect(at0215.success).toBe(true);
+    if (at0215.success) {
+      const d = at0215.data as {
+        observations: Array<{ id: string; content: string }>;
+        asOf: string;
+      };
+      expect(d.asOf).toBe('2026-02-15');
+      const ids = d.observations.map((o) => o.id);
+      expect(ids).toContain(id1);
+      expect(ids).toContain(id2);
+      expect(ids).not.toContain(id3);
+    }
+
+    // asOf 2026-03-15: o1 retired (valid_to passed), o2 live, o3 not yet.
+    const at0315 = entityOpen({ id: eid, asOf: '2026-03-15' });
+    if (at0315.success) {
+      const d = at0315.data as { observations: Array<{ id: string }> };
+      const ids = d.observations.map((o) => o.id);
+      expect(ids).not.toContain(id1);
+      expect(ids).toContain(id2);
+      expect(ids).not.toContain(id3);
+    }
+
+    // asOf 2026-05-01: o2 + o3 live, o1 retired.
+    const at0501 = entityOpen({ id: eid, asOf: '2026-05-01' });
+    if (at0501.success) {
+      const d = at0501.data as { observations: Array<{ id: string }> };
+      const ids = d.observations.map((o) => o.id);
+      expect(ids).not.toContain(id1);
+      expect(ids).toContain(id2);
+      expect(ids).toContain(id3);
+    }
+  });
+
+  it('asOf accepts both ISO 8601 (with T) and SQLite-style (with space) formats', async () => {
+    const { entityCreate, entityObserve, entityOpen } = await import('./entity.js');
+    const { getDb } = await import('../db/client.js');
+    const created = entityCreate({ name: 'FormatTest', entityType: 'concept' });
+    if (!created.success) throw new Error('setup failed');
+    const eid = (created.data as { id: string }).id;
+    const obs = await entityObserve({ entityId: eid, content: 'observation under test' });
+    if (!obs.success) throw new Error('observe failed');
+
+    // Pin a known valid_from we can probe with multiple format strings.
+    getDb()
+      .prepare('UPDATE entity_observations SET valid_from = ? WHERE entity_id = ?')
+      .run('2026-06-15 12:00:00', eid);
+
+    for (const asOf of [
+      '2026-06-16',                  // date-only
+      '2026-06-16 00:00:00',         // SQLite-style
+      '2026-06-16T00:00:00',         // ISO-8601 (no Z)
+      '2026-06-16T00:00:00Z',        // ISO-8601 UTC
+    ]) {
+      const r = entityOpen({ id: eid, asOf });
+      expect(r.success).toBe(true);
+      if (r.success) {
+        const d = r.data as { observations: unknown[] };
+        expect(d.observations.length).toBe(1);
+      }
+    }
+  });
+
+  it('asOf earlier than any valid_from returns zero observations (entity existed but had no facts yet)', async () => {
+    const { entityCreate, entityObserve, entityOpen } = await import('./entity.js');
+    const { getDb } = await import('../db/client.js');
+    const created = entityCreate({ name: 'PreObsEntity', entityType: 'project' });
+    if (!created.success) throw new Error('setup failed');
+    const eid = (created.data as { id: string }).id;
+    await entityObserve({ entityId: eid, content: 'a fact from later' });
+
+    getDb()
+      .prepare('UPDATE entity_observations SET valid_from = ? WHERE entity_id = ?')
+      .run('2026-05-01 00:00:00', eid);
+
+    const result = entityOpen({ id: eid, asOf: '2026-01-01' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const d = result.data as { observations: unknown[]; asOf: string };
+      expect(d.observations.length).toBe(0);
+      expect(d.asOf).toBe('2026-01-01');
+    }
+  });
+
+  it('asOf without value still returns the legacy live-only view (backward compat)', async () => {
+    const { entityCreate, entityObserve, entityOpen } = await import('./entity.js');
+    const { getDb } = await import('../db/client.js');
+    const created = entityCreate({ name: 'LegacyView', entityType: 'tool' });
+    if (!created.success) throw new Error('setup failed');
+    const eid = (created.data as { id: string }).id;
+    await entityObserve({ entityId: eid, content: 'live obs' });
+    await entityObserve({ entityId: eid, content: 'retired obs' });
+    getDb()
+      .prepare("UPDATE entity_observations SET valid_to = datetime('now') WHERE content = ?")
+      .run('retired obs');
+
+    const result = entityOpen({ id: eid });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const d = result.data as { observations: Array<{ content: string }>; asOf?: string };
+      expect(d.observations.length).toBe(1);
+      expect(d.observations[0]?.content).toBe('live obs');
+      // The data payload must NOT carry an asOf key when the caller didn't
+      // pass one — otherwise clients will think they queried at "undefined".
+      expect(d.asOf).toBeUndefined();
+    }
+  });
+
+  it('asOf rejects an unparseable string via the Zod schema', async () => {
+    const { entityOpenSchema } = await import('./entity.js');
+    const parsed = entityOpenSchema.safeParse({ id: 'x', asOf: 'not-a-date' });
+    expect(parsed.success).toBe(false);
+  });
+
+  // ─── R1 Analyst — missing asOf boundary coverage ───
+
+  it('asOf exactly equal to valid_from INCLUDES the observation (boundary: <=)', async () => {
+    // The asOf predicate is `datetime(valid_from) <= datetime(?)`. When asOf
+    // equals valid_from exactly, the observation must be returned. This is
+    // the boundary case a future predicate refactor could silently flip
+    // (e.g. by changing `<=` to `<` and losing the inclusive lower bound).
+    const { entityCreate, entityObserve, entityOpen } = await import('./entity.js');
+    const { getDb } = await import('../db/client.js');
+    const created = entityCreate({ name: 'BoundaryEntity', entityType: 'concept' });
+    if (!created.success) throw new Error('setup failed');
+    const eid = (created.data as { id: string }).id;
+    const obs = await entityObserve({ entityId: eid, content: 'observation on the boundary' });
+    if (!obs.success) throw new Error('observe failed');
+
+    getDb()
+      .prepare('UPDATE entity_observations SET valid_from = ? WHERE entity_id = ?')
+      .run('2026-07-04 12:00:00', eid);
+
+    // asOf exactly equals valid_from.
+    const r = entityOpen({ id: eid, asOf: '2026-07-04 12:00:00' });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      const d = r.data as { observations: Array<{ content: string }> };
+      expect(d.observations.length).toBe(1);
+      expect(d.observations[0]?.content).toBe('observation on the boundary');
+    }
+
+    // One second BEFORE the boundary → still observation not yet valid.
+    const before = entityOpen({ id: eid, asOf: '2026-07-04 11:59:59' });
+    if (before.success) {
+      const d = before.data as { observations: unknown[] };
+      expect(d.observations.length).toBe(0);
+    }
+  });
+
+  it('asOf in the future returns every live observation', async () => {
+    // A common-sense case: asking "what will I know after eternity?" should
+    // return everything currently live (valid_to IS NULL). The future bound
+    // also exercises the right side of the predicate for valid_to.
+    const { entityCreate, entityObserve, entityOpen } = await import('./entity.js');
+    const { getDb } = await import('../db/client.js');
+    const created = entityCreate({ name: 'FutureEntity', entityType: 'project' });
+    if (!created.success) throw new Error('setup failed');
+    const eid = (created.data as { id: string }).id;
+    await entityObserve({ entityId: eid, content: 'live A' });
+    await entityObserve({ entityId: eid, content: 'live B' });
+    // Plant one retired observation to confirm asOf-in-future doesn't
+    // resurrect it (valid_to predicate guard).
+    await entityObserve({ entityId: eid, content: 'retired C' });
+    getDb()
+      .prepare("UPDATE entity_observations SET valid_to = datetime('now') WHERE content = ?")
+      .run('retired C');
+
+    const result = entityOpen({ id: eid, asOf: '2099-12-31' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const d = result.data as { observations: Array<{ content: string }> };
+      const contents = d.observations.map((o) => o.content);
+      expect(contents).toContain('live A');
+      expect(contents).toContain('live B');
+      expect(contents).not.toContain('retired C');
+    }
+  });
+
   it('FTS index stays consistent when an observation content is updated (obs_au trigger)', async () => {
     // The observation table has ai/ad triggers; obs_au was added so a future
     // "edit observation" path doesn't leave stale rows in search_fts pointing

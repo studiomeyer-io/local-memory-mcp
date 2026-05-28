@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.studiomeyer-io/local-memory-mcp",
   "title": "Local Memory",
-  "description": "Persistent local memory. SQLite + FTS5 + sqlite-vec hybrid retrieval, multilingual embeddings, Knowledge Graph. 17 tools. No cloud, no API keys.",
+  "description": "Persistent local memory. SQLite + FTS5 + sqlite-vec hybrid retrieval, bi-temporal asOf queries, contradiction detection, LLM-free reflection, multilingual embeddings, Knowledge Graph. 21 tools. No cloud, no API keys.",
   "repository": {
     "url": "https://github.com/studiomeyer-io/local-memory-mcp",
     "source": "github"
   },
-  "version": "2.0.0",
+  "version": "2.1.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@studiomeyer/local-memory-mcp",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "transport": {
         "type": "stdio"
       },

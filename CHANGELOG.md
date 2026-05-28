@@ -1,5 +1,87 @@
 # Changelog
 
+## [2.1.0] — 2026-05-29
+
+### Added — Bi-temporal asOf queries (`memory_entity_open`)
+
+The `entity_observations` table has carried `valid_from` + `valid_to` columns since v1.0.0, but until v2.1.0 no tool actually filtered on them. `memory_entity_open` now accepts an optional `asOf` parameter. When provided, observations are filtered to the bi-temporal window:
+
+```sql
+WHERE datetime(valid_from) <= datetime(?)
+  AND (valid_to IS NULL OR datetime(valid_to) > datetime(?))
+```
+
+Both `valid_from` and `valid_to` plus the user input are wrapped through `datetime()` so the caller can pass any format SQLite understands — `2026-04-15`, `2026-04-15 00:00:00`, `2026-04-15T00:00:00`, `2026-04-15T00:00:00Z` — without normalising on our side. The Zod schema uses `Date.parse()` (permissive) to fail-fast on a malformed string. Backward-compatible: omit `asOf` and you get the legacy `valid_to IS NULL` live view.
+
+Use case: "what did I know about Matthias on April 15?" The LLM reads the resulting observation set as the snapshot of belief at that moment.
+
+### Added — `memory_contradictions` (LLM-free fact-supersession scanner)
+
+Surfaces observation pairs that are semantically very similar (cosine similarity above a threshold) but disagree on one of two heuristic axes:
+
+1. **Negation marker XOR** — one side asserts, the other negates. The regex covers EN / DE / ES / Catalan (`not`, `no longer`, `never`, `n't`, `kein`, `nicht`, `niemals`, `nie`, `sin`, `sem`, `não`, `none`).
+2. **Confidence drift** — same surface claim recorded with very different `confidence` values (`>= minConfidenceDrift`, default 0.2).
+
+Cosine math runs in SQL via `vec_distance_cosine` (provided by sqlite-vec). The intra-entity self-join keeps the pair-set bounded at Σ N²/2 over entities — a few hundred pairs even for power-user corpora. Per pair we return both observations, the cosine score, the reasons flagged, and a supersede suggestion identifying the older side (by `valid_from`).
+
+LLM-free on purpose — the no-API-key promise holds. Pure duplicates (high cosine, no negation, no confidence drift) are NOT flagged, only contradiction candidates. Requires sqlite-vec to be loaded; on platforms where it isn't, returns `code: 'VECTOR_DISABLED'` with a clear message instead of degrading silently.
+
+Scope: `entityId` > `entityName + entityType` > global scan (default). Knobs: `minCosine` (default 0.7), `minConfidenceDrift` (default 0.2), `limit` (default 20).
+
+### Added — `memory_learn_archive` (soft delete)
+
+Flips `archived = 1`, `archived_at = now`, `lifecycle_state = 'archived'` (or `archived:<reason>` if a reason is provided). The row stays in `learnings` so asOf-style cross-references continue to resolve, and the embedding stays in vec0 so a "find me past archived learnings that looked like this" search remains possible. `recall`, `search`, and the gatekeeper's similarity check all filter `archived = 0`, so archived rows never resurface as live answers. Idempotent — a second call returns `action: 'already_archived'` without mutating.
+
+### Added — `memory_learn_update` (atomic edit)
+
+Edits a live (non-archived) learning. At least one of `content`, `confidence`, or `tags` must be provided. Bumps `usage_count` and sets `last_used` so an edit counts as a touch. When `content` changes, re-embeds in the F4 atomic pattern: compute the vector outside any transaction (because `embed()` is async), then `UPDATE` the row + `writeEmbeddingSync` inside one sync `db.transaction()`. Either both commit or both roll back. If `vec` is disabled or `embed()` fails, the now-stale OLD embedding is purged so cosine search can't surface a vector that no longer represents the live text. Rejects edits to archived learnings with `code: 'ARCHIVED'`.
+
+### Added — `memory_reflect` (LLM-free aggregation)
+
+Stanford Generative Agents' reflection step, minus the LLM call. Aggregates recent memory activity into four sections:
+
+- **Most-used learnings** — top N by `usage_count` last touched inside the lookback window.
+- **Stale learnings** — `archived = 0`, `usage_count = 0`, `date < (now - staleThresholdDays)`. Candidates for `memory_learn_archive` / `memory_learn_update`.
+- **Hot entities** — top N entities by new observations created inside the lookback window.
+- **Open decisions** — `verified = 0` AND `date < (now - lookback)`. Candidates for follow-up.
+
+Returns structured data PLUS a Markdown summary in `data.summary`. The Markdown is for the LLM to read at session start; the structured fields are for downstream automation (Claude Code Hook, n8n workflow) that wants to react without reparsing. Defaults: `lookbackDays: 7`, `staleThresholdDays: 30`, `limit: 5`. Optional `project` filter.
+
+### Changed — `memory_session_end` instructions block bumped to 21 tools
+
+`src/server.ts` INSTRUCTIONS block now lists the v2.1 surface: asOf on `entity_open`, the contradictions scanner, archive + update on learnings, and the reflection tool. The `21 tools` count line replaces the old `17 tools`.
+
+### Changed — Manifests bumped to v2.1.0
+
+- `package.json` — version + description extended.
+- `server.json` — version on the package metadata + the tool-count line in the description.
+- `mcpb-build/manifest.json` — version, long_description, and the `tools` array extended with the four new tool entries.
+- `src/server.ts` — `SERVER_VERSION = '2.1.0'`.
+
+### Tests
+
+- `src/tools/entity.test.ts` — 5 new asOf test cases covering: in-window + closed-window + future, multi-format date parsing (ISO 8601, SQLite-style, date-only), pre-observation history, backward-compat without `asOf`, Zod schema rejection of unparseable strings. **+5 tests**
+- `src/tools/learn.test.ts` — 10 new test cases for archive + update covering: flag flip, idempotency, recall-filter regression, NOT_FOUND, content-change re-embed, confidence-only no-reembed, archived rejection, NOTHING_TO_UPDATE, NOT_FOUND, tags-only update + JSON round-trip. Plus a registry test pinning the 4 v2.1 tools by name. **+11 tests**
+- `src/tools/contradictions.test.ts` — **NEW**, 9 test cases covering: vec-disabled error, negation-diff flag, confidence-drift flag, clean-pair non-flag, entityId scope, entityName + entityType resolution, NOT_FOUND, limit, tombstone (`valid_to IS NOT NULL`) ignore.
+- `src/tools/reflect.test.ts` — **NEW**, 8 test cases covering: structured payload + markdown shape, most-used in lookback, stale beyond threshold, hot entity by observation count, open decision older than lookback, project scope, archived skip from stale + most-used, friendly fallback on empty memory.
+- `src/tools/learn.test.ts` — drift-detection test updated to `TOOLS.length === 21`, plus a new test pinning the four v2.1 tool names so this class of registry drift cannot recur silently.
+- **Total: 159 tests** (was 126), all green on Linux x64 with sqlite-vec loaded.
+
+### Backlog (v2.1 → v2.2 candidates)
+
+The Phase 3 plan from `output/2026-05-28-local-memory-mcp-improvement-plan/PLAN.md` is fully landed. The following items were intentionally deferred to v2.2 or later:
+
+- `memory_observation_supersede(observationId)` — companion tool to the contradiction scanner that sets `valid_to = now` on the older observation. The scanner's suggestion field references it.
+- `memory_decide_verify(decisionId)` — flip `verified = 1` on a decision; would make `memory_reflect` "open decisions" semantically tighter.
+- `memory_learn_history(learningId)` — proper audit trail for `learn_update` (currently the previous content is not retained — V2.1 trades perfect history for schema-stability).
+- Migration runner (`meta.schema_version` driver), E2E stdio test layer, BEGIN IMMEDIATE pragma for multi-process writes — see the R1+R2 backlog in `nex-hq/docs/handovers/2026-05-29-local-memory-mcp-v2-phase3-phase4-handover.md`.
+
+### Migration notes
+
+- The on-disk DB layout from v2.0 is unchanged. v2.1 adds no schema migration — every new tool reads existing columns (`archived`, `archived_at`, `lifecycle_state`, `valid_from`, `valid_to`, `verified`) that have been present since v1.0.0.
+- Existing rows without an embedding (created before v2.0 or under `MEMORY_EMBED_DISABLED=1`) are invisible to the contradictions scanner. That's by design — the cosine math needs both sides embedded.
+- The `memory_contradictions` tool requires sqlite-vec. On platforms where the extension can't load, it returns `code: 'VECTOR_DISABLED'`. Every other v2.1 tool works without vec.
+
 ## [2.0.0] — 2026-05-28
 
 ### Added — Hybrid retrieval (BM25 + vector cosine via RRF)

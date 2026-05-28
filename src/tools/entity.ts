@@ -205,10 +205,34 @@ export function entitySearch(input: z.infer<typeof entitySearchSchema>): ToolRes
 
 // ─── entity_open ─────────────────────────────────────
 
+// P3.1 v2.1.0: asOf — bi-temporal point-in-time query. Schema already has
+// valid_from + valid_to on entity_observations from day 1, but until v2.1.0
+// no tool actually filtered on them. When asOf is provided:
+//   - observations are filtered to those whose validity window contains the
+//     asOf instant: valid_from <= asOf AND (valid_to IS NULL OR valid_to > asOf).
+//   - we wrap both sides through SQLite's `datetime()` function so a caller
+//     can pass any format SQLite understands (`2026-04-15`,
+//     `2026-04-15 00:00:00`, `2026-04-15T00:00:00`, `…Z`) without us having
+//     to parse it.
+//   - the asOf parameter is also accepted as a flat date (`2026-04-15`) and
+//     SQLite treats that as `2026-04-15 00:00:00` — start of day.
+// Use case: "what did I know about Matthias on April 15?" — the LLM reads
+// the resulting observation set as the snapshot of belief at that moment.
+//
+// Validation: Date.parse() is permissive (accepts ISO + many forms). If a
+// malformed string slips through, SQLite's datetime() returns NULL and every
+// comparison becomes UNKNOWN — no rows surface. That's a benign degradation:
+// the LLM sees "no observations at this date" instead of an obscure SQL error.
 export const entityOpenSchema = z.object({
   id: z.string().optional(),
   name: z.string().optional(),
   entityType: z.string().optional(),
+  asOf: z
+    .string()
+    .refine((v) => !Number.isNaN(Date.parse(v)), {
+      message: 'asOf must be a parseable date string (ISO 8601 or SQLite-compatible)',
+    })
+    .optional(),
 });
 
 export function entityOpen(input: z.infer<typeof entityOpenSchema>): ToolResult {
@@ -238,14 +262,30 @@ export function entityOpen(input: z.infer<typeof entityOpenSchema>): ToolResult 
     return { success: false, error: 'Entity not found.', code: 'NOT_FOUND' };
   }
 
-  const observations = db
-    .prepare(
-      `SELECT id, content, source, valid_from, valid_to, confidence, created_at
-       FROM entity_observations
-       WHERE entity_id = ? AND valid_to IS NULL
-       ORDER BY created_at DESC`
-    )
-    .all(entity.id);
+  // P3.1: bi-temporal filter when asOf is provided. Otherwise the legacy
+  // "show all live observations" path is preserved.
+  let observations: unknown[];
+  if (input.asOf) {
+    observations = db
+      .prepare(
+        `SELECT id, content, source, valid_from, valid_to, confidence, created_at
+         FROM entity_observations
+         WHERE entity_id = ?
+           AND datetime(valid_from) <= datetime(?)
+           AND (valid_to IS NULL OR datetime(valid_to) > datetime(?))
+         ORDER BY datetime(valid_from) DESC`
+      )
+      .all(entity.id, input.asOf, input.asOf);
+  } else {
+    observations = db
+      .prepare(
+        `SELECT id, content, source, valid_from, valid_to, confidence, created_at
+         FROM entity_observations
+         WHERE entity_id = ? AND valid_to IS NULL
+         ORDER BY created_at DESC`
+      )
+      .all(entity.id);
+  }
 
   const relations = db
     .prepare(
@@ -263,7 +303,12 @@ export function entityOpen(input: z.infer<typeof entityOpenSchema>): ToolResult 
 
   return {
     success: true,
-    data: { entity, observations, relations },
+    data: {
+      entity,
+      observations,
+      relations,
+      ...(input.asOf ? { asOf: input.asOf } : {}),
+    },
   };
 }
 

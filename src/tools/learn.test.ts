@@ -157,6 +157,181 @@ describe('learn gatekeeper', () => {
   });
 });
 
+// ─── P3.3 v2.1.0 — learn_archive ──────────────────────
+
+describe('learn_archive', () => {
+  it('archives a live learning and flips archived + lifecycle_state + archived_at', async () => {
+    const { learn, learnArchive } = await import('./learn.js');
+    const { getDb } = await import('../db/client.js');
+    const created = await learn({ category: 'pattern', content: 'first archive target' });
+    expect(created.success).toBe(true);
+    const id = created.success ? (created.data as { id: string }).id : '';
+
+    const archived = learnArchive({ learningId: id, reason: 'wrong' });
+    expect(archived.success).toBe(true);
+    if (archived.success) {
+      const d = archived.data as { action: string; lifecycleState: string };
+      expect(d.action).toBe('archived');
+      expect(d.lifecycleState).toBe('archived:wrong');
+    }
+
+    const row = getDb()
+      .prepare(
+        'SELECT archived, archived_at, lifecycle_state FROM learnings WHERE id = ?'
+      )
+      .get(id) as { archived: number; archived_at: string; lifecycle_state: string };
+    expect(row.archived).toBe(1);
+    expect(row.archived_at).toBeTruthy();
+    expect(row.lifecycle_state).toBe('archived:wrong');
+  });
+
+  it('idempotent: a second archive call returns already_archived without mutating', async () => {
+    const { learn, learnArchive } = await import('./learn.js');
+    const { getDb } = await import('../db/client.js');
+    const created = await learn({ category: 'pattern', content: 'idempotency target' });
+    const id = created.success ? (created.data as { id: string }).id : '';
+
+    const first = learnArchive({ learningId: id });
+    expect(first.success).toBe(true);
+    const archivedAt1 = (getDb().prepare('SELECT archived_at FROM learnings WHERE id = ?').get(id) as { archived_at: string }).archived_at;
+
+    const second = learnArchive({ learningId: id, reason: 'should-not-stick' });
+    expect(second.success).toBe(true);
+    if (second.success) {
+      expect((second.data as { action: string }).action).toBe('already_archived');
+    }
+    const archivedAt2 = (getDb().prepare('SELECT archived_at, lifecycle_state FROM learnings WHERE id = ?').get(id) as { archived_at: string; lifecycle_state: string });
+    expect(archivedAt2.archived_at).toBe(archivedAt1);
+    // The first call had no reason → lifecycle should stay plain 'archived'.
+    expect(archivedAt2.lifecycle_state).toBe('archived');
+  });
+
+  it('archived learnings are filtered out of recall', async () => {
+    const { learn, learnArchive, recall } = await import('./learn.js');
+    const a = await learn({ category: 'pattern', content: 'visible after archive of sibling' });
+    const b = await learn({ category: 'pattern', content: 'this one will be archived' });
+    const bId = b.success ? (b.data as { id: string }).id : '';
+    learnArchive({ learningId: bId });
+
+    const r = recall({ query: 'archive' });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      const ids = (r.data as { results: Array<{ id: string }> }).results.map((x) => x.id);
+      expect(ids).not.toContain(bId);
+    }
+    expect(a.success).toBe(true);
+  });
+
+  it('returns NOT_FOUND for an unknown id', async () => {
+    const { learnArchive } = await import('./learn.js');
+    const result = learnArchive({ learningId: 'no-such-id' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe('NOT_FOUND');
+    }
+  });
+});
+
+// ─── P3.3 v2.1.0 — learn_update ───────────────────────
+
+describe('learn_update', () => {
+  it('updates content, bumps usage_count, and re-embeds atomically', async () => {
+    const { learn, learnUpdate } = await import('./learn.js');
+    const { getDb } = await import('../db/client.js');
+    const { isVectorEnabled } = await import('../db/vector.js');
+    const created = await learn({ category: 'pattern', content: 'old content under test' });
+    const id = created.success ? (created.data as { id: string }).id : '';
+
+    const updated = await learnUpdate({ learningId: id, content: 'new content under test' });
+    expect(updated.success).toBe(true);
+    if (updated.success) {
+      const d = updated.data as { action: string; contentChanged: boolean; reembedded: boolean };
+      expect(d.action).toBe('updated');
+      expect(d.contentChanged).toBe(true);
+      if (isVectorEnabled()) {
+        expect(d.reembedded).toBe(true);
+      }
+    }
+
+    const row = getDb()
+      .prepare('SELECT content, usage_count, last_used FROM learnings WHERE id = ?')
+      .get(id) as { content: string; usage_count: number; last_used: string };
+    expect(row.content).toBe('new content under test');
+    expect(row.usage_count).toBeGreaterThanOrEqual(1);
+    expect(row.last_used).toBeTruthy();
+
+    if (isVectorEnabled()) {
+      const e = getDb()
+        .prepare('SELECT content_id FROM embeddings WHERE content_id = ?')
+        .get(id) as { content_id: string } | undefined;
+      expect(e).toBeDefined();
+    }
+  });
+
+  it('updating only confidence does not re-embed', async () => {
+    const { learn, learnUpdate } = await import('./learn.js');
+    const { isVectorEnabled } = await import('../db/vector.js');
+    const created = await learn({ category: 'pattern', content: 'confidence-only update target' });
+    const id = created.success ? (created.data as { id: string }).id : '';
+
+    const updated = await learnUpdate({ learningId: id, confidence: 0.95 });
+    expect(updated.success).toBe(true);
+    if (updated.success) {
+      const d = updated.data as { contentChanged: boolean; reembedded: boolean };
+      expect(d.contentChanged).toBe(false);
+      // reembedded must stay false even when vector is enabled.
+      if (isVectorEnabled()) expect(d.reembedded).toBe(false);
+    }
+  });
+
+  it('rejects updating an archived learning with code=ARCHIVED', async () => {
+    const { learn, learnArchive, learnUpdate } = await import('./learn.js');
+    const created = await learn({ category: 'pattern', content: 'archive-then-update target' });
+    const id = created.success ? (created.data as { id: string }).id : '';
+    learnArchive({ learningId: id });
+
+    const update = await learnUpdate({ learningId: id, content: 'attempted edit' });
+    expect(update.success).toBe(false);
+    if (!update.success) {
+      expect(update.code).toBe('ARCHIVED');
+    }
+  });
+
+  it('rejects an update with NOTHING_TO_UPDATE when no field is provided', async () => {
+    const { learn, learnUpdate } = await import('./learn.js');
+    const created = await learn({ category: 'pattern', content: 'nothing-to-update test' });
+    const id = created.success ? (created.data as { id: string }).id : '';
+    const result = await learnUpdate({ learningId: id });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe('NOTHING_TO_UPDATE');
+    }
+  });
+
+  it('returns NOT_FOUND for an unknown id', async () => {
+    const { learnUpdate } = await import('./learn.js');
+    const result = await learnUpdate({ learningId: 'no-such-id', content: 'x' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe('NOT_FOUND');
+    }
+  });
+
+  it('updating tags persists as JSON, no re-embed required', async () => {
+    const { learn, learnUpdate } = await import('./learn.js');
+    const { getDb } = await import('../db/client.js');
+    const created = await learn({ category: 'pattern', content: 'tag-update target' });
+    const id = created.success ? (created.data as { id: string }).id : '';
+    const updated = await learnUpdate({ learningId: id, tags: ['v2.1', 'phase3'] });
+    expect(updated.success).toBe(true);
+
+    const row = getDb()
+      .prepare('SELECT tags_json FROM learnings WHERE id = ?')
+      .get(id) as { tags_json: string };
+    expect(JSON.parse(row.tags_json)).toEqual(['v2.1', 'phase3']);
+  });
+});
+
 describe('recall + search', () => {
   it('recall without query returns both inserted learnings', async () => {
     const { learn, recall } = await import('./learn.js');
@@ -211,16 +386,25 @@ describe('recall + search', () => {
 });
 
 describe('tool registry', () => {
-  it('exports exactly 17 tools with valid JSON Schema for each', async () => {
+  it('exports exactly 21 tools with valid JSON Schema for each', async () => {
     const { TOOLS, toMcpToolList } = await import('./registry.js');
-    expect(TOOLS.length).toBe(17);
+    expect(TOOLS.length).toBe(21);
     const listed = toMcpToolList();
-    expect(listed.length).toBe(17);
+    expect(listed.length).toBe(21);
     for (const t of listed) {
       expect(t.name).toMatch(/^memory_/);
       expect(typeof t.description).toBe('string');
       expect((t.inputSchema as Record<string, unknown>).type).toBe('object');
     }
+  });
+
+  it('registers the four v2.1.0 lifecycle + reflection tools', async () => {
+    const { toMcpToolList } = await import('./registry.js');
+    const names = toMcpToolList().map((t) => t.name);
+    expect(names).toContain('memory_learn_archive');
+    expect(names).toContain('memory_learn_update');
+    expect(names).toContain('memory_contradictions');
+    expect(names).toContain('memory_reflect');
   });
 
   it('registers the four previously-orphan tools (entity_create, entity_delete, goal, health)', async () => {

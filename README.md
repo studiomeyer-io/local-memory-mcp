@@ -11,7 +11,7 @@
 ![License](https://img.shields.io/github/license/studiomeyer-io/local-memory-mcp?style=flat-square&color=22c55e&label=license)
 ![Last commit](https://img.shields.io/github/last-commit/studiomeyer-io/local-memory-mcp?style=flat-square&color=88c0d0&label=updated)
 ![GitHub stars](https://img.shields.io/github/stars/studiomeyer-io/local-memory-mcp?style=flat-square&color=ffd700&logo=github&label=stars)
-<!-- /badges -->**Persistent local memory for Claude, Cursor & Codex. 17 tools. Hybrid retrieval (BM25 + vector cosine, RRF). Multilingual embeddings. No cloud. No API keys.**
+<!-- /badges -->**Persistent local memory for Claude, Cursor & Codex. 21 tools. Hybrid retrieval (BM25 + vector cosine, RRF). Bi-temporal asOf queries. LLM-free contradiction detection + reflection. Multilingual embeddings. No cloud. No API keys.**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@studiomeyer/local-memory-mcp)](https://www.npmjs.com/package/@studiomeyer/local-memory-mcp)
@@ -47,10 +47,10 @@ claude mcp add memory -- npx -y @studiomeyer/local-memory-mcp
 
 | Platform | Bundle |
 |---|---|
-| Linux x64 | `local-memory-mcp-2.0.0-linux-x64.mcpb` |
-| macOS Apple Silicon | `local-memory-mcp-2.0.0-darwin-arm64.mcpb` |
-| macOS Intel | `local-memory-mcp-2.0.0-darwin-x64.mcpb` |
-| Windows x64 | `local-memory-mcp-2.0.0-win32-x64.mcpb` |
+| Linux x64 | `local-memory-mcp-2.1.0-linux-x64.mcpb` |
+| macOS Apple Silicon | `local-memory-mcp-2.1.0-darwin-arm64.mcpb` |
+| macOS Intel | `local-memory-mcp-2.1.0-darwin-x64.mcpb` |
+| Windows x64 | `local-memory-mcp-2.1.0-win32-x64.mcpb` |
 
 Each bundle is platform-specific because `better-sqlite3` is a native module — the matching `.node` binary is shipped inside the bundle so you don't need a build toolchain.
 
@@ -154,7 +154,69 @@ memory_search({ query: "...", mode: "vector" })    // cosine only
 - `MEMORY_EMBED_CACHE_DIR=...` — override the Transformers.js cache location.
 - `MEMORY_EMBED_DTYPE=fp32|fp16|q8|q4` — model quantization (default `q8`).
 
-## Tools (17)
+## Lifecycle + Reflection (v2.1.0+)
+
+v2.1 closes the gap between "store a fact" and "manage a memory over time". The schema has carried `archived`, `lifecycle_state`, `valid_from`, and `valid_to` since v1, but no tool exposed them. Now four tools do.
+
+### Bi-temporal asOf — "what did I know on date X?"
+
+```text
+memory_entity_open({ id: "...", asOf: "2026-04-15" })
+```
+
+Returns the entity plus the observation set whose validity window contained `2026-04-15`. The filter is `valid_from <= asOf AND (valid_to IS NULL OR valid_to > asOf)`. Accepts any format SQLite's `datetime()` recognizes: ISO 8601 (`2026-04-15T00:00:00Z`), SQLite-style (`2026-04-15 00:00:00`), or date-only (`2026-04-15`). Without `asOf` you get the legacy live-view (every observation with `valid_to IS NULL`).
+
+**Design choice — valid-time only, not full bi-temporal.** SQL:2011, XTDB, Datomic offer two-axis bi-temporal (valid-time × transaction-time). We do valid-time only; transaction-time lives passively in `created_at` but isn't queryable as a separate axis. For a local AI-memory product the question is "what did the AI *know* about X on date Y" — that's valid-time. Full bi-temporal matters for regulated audit trails (insurance, banking) — if you need it, reach for XTDB.
+
+**Scale note.** The asOf predicate wraps `valid_from` in SQLite's `datetime()` for format-robust comparisons, which means the planner can't use an index on the column directly. For corpora of <1000 observations per entity (typical) the scan is sub-millisecond. If you have an entity with 10k+ observations, add an expression index — `CREATE INDEX idx_obs_valid_from_dt ON entity_observations(datetime(valid_from))` — and the predicate becomes sargable again.
+
+### Contradiction scanner — LLM-free
+
+```text
+memory_contradictions({ minCosine: 0.75, minConfidenceDrift: 0.2 })
+memory_contradictions({ entityId: "...", limit: 20 })
+```
+
+Surfaces observation pairs that are semantically very close (cosine similarity above `minCosine`) but disagree on either:
+
+- **negation marker XOR** — one side asserts, the other negates (regex covers EN / DE / ES / Catalan).
+- **confidence drift** — same surface claim, very different `confidence` values.
+
+LLM-free on purpose — the no-API-key promise holds. The heuristic is conservative; the AI client judges. Pure duplicates (no negation, no confidence drift) are not flagged. The cosine math runs in SQL via `vec_distance_cosine`, so the extension must be loaded; on platforms where it isn't, the tool returns `VECTOR_DISABLED` with a clear message instead of degrading silently.
+
+**Calibration.** Default `minCosine = 0.75` follows 2026 retriever-tuning literature (SparseCL on Arguana; Milvus threshold-tuning guidance) which finds a sharp false-positive rise below 0.7. Lower to 0.6 for recall-heavy use, raise to 0.85 for precision-heavy. The negation regex covers EN / DE / ES / Catalan / Portuguese / Italian / French — the seven languages multilingual-e5-small handles strongest.
+
+### Archive + update — lifecycle for learnings
+
+```text
+memory_learn_archive({ learningId: "...", reason: "wrong" })
+memory_learn_update({ learningId: "...", content: "…", confidence: 0.9 })
+```
+
+`archive` is a soft delete: the row stays in `learnings` (with `archived = 1`, `archived_at`, and `lifecycle_state = 'archived' | 'archived:<reason>'`), the embedding stays in vec0 (so asOf-style cross-references can still resolve), but `recall` / `search` / the gatekeeper's similarity check all filter it out. Idempotent.
+
+`update` edits a live (non-archived) learning. If `content` changes we re-embed in the F4 atomic pattern (compute outside the transaction, write inside one sync `db.transaction()`). If the embedding write fails or vec is disabled, the now-stale old embedding is purged so cosine search can't surface a vector that no longer represents the live text. Bumps `usage_count` and sets `last_used` so an edit counts as a touch.
+
+**Trade-off — no audit trail in v2.1.** `update` overwrites the previous content. The old text is not retained anywhere. This keeps the schema clean for V2.1; v2.2 will add `memory_learn_history` plus an immutable `learnings_history` table for users who need point-in-time recovery. If you need an audit trail today, `memory_learn_archive(reason: "wrong")` the old learning and `memory_learn` the new one as a fresh row — the old text stays in the archived row.
+
+### Reflection — what's important right now
+
+```text
+memory_reflect({ lookbackDays: 7, staleThresholdDays: 30 })
+```
+
+Aggregation pass over the recent memory stream — Stanford Generative Agents' reflection step, minus the LLM. Returns a structured payload PLUS a Markdown summary covering:
+
+- **Most-used learnings** — top N by `usage_count` touched inside the lookback.
+- **Stale learnings** — created longer than `staleThresholdDays` ago and never recalled. Archive candidates.
+- **Hot entities** — top N by new observations inside the lookback.
+- **Open decisions** — older than the lookback and `verified = 0`. Follow-up candidates.
+
+The Markdown is for the LLM to read at session start; the structured fields are for downstream automation (Claude Code Hook, n8n workflow) that wants to react without reparsing. Pass `project` to scope to one project.
+
+**Sleeptime via hooks.** Letta / Zep / Mem0 run reflection in a background "sleeptime" loop. We run on-demand because we're a stateless stdio daemon — but you get sleeptime semantics for free by wiring a Claude Code SessionStart or SessionEnd hook (or an n8n cron, or a `crontab` entry) that calls `memory_reflect`. The summary lands in the LLM's context at the same time as your `memory_session_start` snapshot. Zero new infrastructure.
+
+## Tools (21)
 
 ### Sessions
 
@@ -170,6 +232,10 @@ memory_search({ query: "...", mode: "vector" })    // cosine only
 
 **`memory_search`** -- Unified search across everything: learnings, decisions, entities, and observations. Uses FTS5 with bm25 ranking. Multi-word queries match any of the words and rank by relevance. Use `types` array to filter (e.g. `["learning", "decision"]`). This is the broadest search tool.
 
+**`memory_learn_archive`** *(v2.1+)* -- Soft-delete a learning. The row stays in the DB (so asOf queries that reference it still resolve) but never resurfaces in recall or search. Optional `reason` is stored on `lifecycle_state` as `archived:<reason>`. Idempotent — calling twice returns `already_archived`.
+
+**`memory_learn_update`** *(v2.1+)* -- Edit a live learning (`content` / `confidence` / `tags`). At least one field is required. Bumps `usage_count` + `last_used` so an edit counts as a touch. Re-embeds atomically when `content` changes (F4 pattern: compute outside the transaction, write inside one sync `db.transaction()`). Rejects edits to archived learnings with `code: 'ARCHIVED'`.
+
 **When to use recall vs search:** Use `recall` when you want learnings specifically. Use `search` when you want to find anything across all types, including entities and decisions.
 
 ### Decisions
@@ -182,13 +248,17 @@ memory_search({ query: "...", mode: "vector" })    // cosine only
 
 **`memory_entity_search`** -- Fuzzy search across entity names and their observations. Finds "Claude" even if you search for "claude ai". Optional `entityType` filter to narrow results.
 
-**`memory_entity_open`** -- Load a full entity view: the entity itself, all its current observations, and all its relations to other entities. Search by `name` or `id`. This is the deep-dive tool when you want everything about one entity.
+**`memory_entity_open`** -- Load a full entity view: the entity itself, all its current observations, and all its relations to other entities. Search by `name` or `id`. *v2.1: optional `asOf` parameter for a bi-temporal point-in-time view — "what did I know about this entity on date X?"*
 
 **`memory_entity_relate`** -- Create a typed, directed edge between two entities. Parameters: `fromEntityId`, `toEntityId`, `relationType` (e.g. "works_at", "uses", "created", "depends_on"). Optional `weight` (0-1). Build a graph of how things connect.
+
+**`memory_contradictions`** *(v2.1+)* -- LLM-free scanner that surfaces observation pairs with high cosine similarity but disagreeing on negation markers or confidence. The AI client (Claude / Cursor) judges the candidates. Optional scope: `entityId` or `entityName + entityType`. Knobs: `minCosine` (default 0.75), `minConfidenceDrift` (default 0.2), `limit` (default 20). Requires `sqlite-vec` — returns `VECTOR_DISABLED` if not loaded.
 
 **Recommended entity types:** `person`, `project`, `company`, `tool`, `concept`, `service`, `team`. Use whatever makes sense for your domain.
 
 ### Reflection
+
+**`memory_reflect`** *(v2.1+)* -- Aggregation pass over the recent memory stream. Returns structured data plus a Markdown summary covering: most-used learnings (top N by usage_count touched in lookback), stale learnings (created > `staleThresholdDays` ago, never recalled), hot entities (top N by new observations in lookback), open decisions (`verified = 0`, older than lookback). LLM-free — Stanford Generative Agents' reflection step without the API call. Defaults: `lookbackDays: 7`, `staleThresholdDays: 30`, `limit: 5`. Optional `project` filter.
 
 **`memory_insights`** -- Overview stats: how many days of memory, total sessions, learnings, decisions, entities. Category breakdown and entity type breakdown. Good for "what does Claude know about me" moments. Optional `project` filter.
 
@@ -245,7 +315,10 @@ Override: `MEMORY_DB_PATH=/your/preferred/path.sqlite`
 | Duplicate Guard | Yes (FTS5 + similarity) | No | No | No | Unknown | Unknown | Unknown | Unknown |
 | Decision Tracking | **Yes (unique)** | No | No | No | No | No | No | No |
 | Session Context | Yes (auto-load) | Yes | No | No | No | No | Yes | Yes |
-| Tools | **17** | 17 | 5 | 29 | API | API | API | API |
+| Tools | **21** | 17 | 5 | 29 | API | API | API | API |
+| Bi-temporal asOf | **Yes (v2.1)** | Unknown | No | No | Yes | Yes | Partial | Unknown |
+| Contradiction scanner | **Yes (v2.1, LLM-free)** | No | No | No | LLM-driven | LLM-driven | No | No |
+| Reflection / consolidation | **Yes (v2.1, LLM-free)** | No | No | No | LLM-driven | Yes (sleeptime) | Yes (sleeptime) | No |
 | Language | TypeScript | TypeScript | TypeScript | Python | Python | Python | Python | Python |
 | Storage | SQLite + sqlite-vec | SQLite | JSON file | ChromaDB | Cloud | Cloud | Various | FalkorDB + Qdrant |
 | API keys needed | **No** | No | No | No | Yes (cloud) | Yes (cloud) | Optional | Optional |
@@ -262,7 +335,7 @@ Two products, same team, different use cases:
 | | **local-memory-mcp** (this repo) | **StudioMeyer Memory** (hosted) |
 |---|---|---|
 | Where | Your machine (SQLite + sqlite-vec) | Cloud (Supabase EU Frankfurt) |
-| Tools | 17 | 56 |
+| Tools | 21 | 56 |
 | Search | FTS5 + sqlite-vec hybrid (RRF) | FTS5 + pgvector + cross-encoder reranking |
 | Embeddings | Local (multilingual-e5-small, 384-dim) | Cloud (multiple models, reranking) |
 | Multi-device | No | Yes |
