@@ -258,6 +258,69 @@ export async function embedQuery(text: string): Promise<Float32Array | null> {
 }
 
 /**
+ * Batch-embed many passages in ONE model forward pass (v2.2.0).
+ *
+ * Why this exists: `Promise.all(texts.map(embed))` does NOT parallelise on a
+ * CPU-only Transformers.js backend — JS is single-threaded and each inference
+ * is synchronous compute on the event loop, so they run back-to-back. The real
+ * throughput win is handing the whole array to the pipeline at once: the model
+ * batches them into a single forward pass (per the Transformers.js docs,
+ * "embedding 10 sentences together is much closer to embedding 1 than to
+ * embedding 10 individually"). Used by memory_learn_bulk + memory_import.
+ *
+ * Same null contract as embed(): returns an array the same length as `texts`,
+ * each element a 384-dim Float32Array or null (disabled / load-failed / per-row
+ * shape error). Storage-side passages get the "passage: " prefix, matching
+ * embed().
+ */
+export async function embedBatch(texts: string[]): Promise<(Float32Array | null)[]> {
+  if (texts.length === 0) return [];
+  if (state.mode === 'disabled') return texts.map(() => null);
+  if (state.mode === 'mock') return texts.map((t) => mockEmbed(t));
+
+  const ex = await getPipeline();
+  if (!ex) return texts.map(() => null);
+
+  try {
+    const prefixed = texts.map((t) => `passage: ${t}`);
+    const result = await ex(prefixed, { pooling: 'mean', normalize: true });
+    const data = result.data;
+    // Batch output is a flat tensor of shape dims = [N, rowDim]. Slice each
+    // row into its own defensive 384-dim copy. rowDim defends against a
+    // quantization path that returns a wider tensor than EMBEDDING_DIM.
+    const n = texts.length;
+    const rowDim = result.dims.length >= 2 ? (result.dims[result.dims.length - 1] ?? EMBEDDING_DIM) : EMBEDDING_DIM;
+    const flat: Float32Array = data instanceof Float32Array ? data : Float32Array.from(data as number[]);
+    // Copy AT MOST one row's own data into each output vector. copyLen guards
+    // the narrow-model case (rowDim < 384): we must never read past row i into
+    // row i+1, so we copy only `min(EMBEDDING_DIM, rowDim)` floats from THIS
+    // row and zero-pad the tail — mirroring single embed()'s pad-short / slice-
+    // wide behaviour. The availability guard checks a FULL row is present
+    // (start + rowDim), not just EMBEDDING_DIM, so a malformed/short tensor
+    // yields null rather than cross-contaminated vectors. (R2 hardening.)
+    const copyLen = Math.min(EMBEDDING_DIM, rowDim);
+    const out: (Float32Array | null)[] = [];
+    for (let i = 0; i < n; i++) {
+      const start = i * rowDim;
+      if (start + rowDim > flat.length) {
+        out.push(null);
+        continue;
+      }
+      const vec = new Float32Array(EMBEDDING_DIM);
+      vec.set(flat.subarray(start, start + copyLen));
+      out.push(vec);
+    }
+    return out;
+  } catch (err) {
+    if (!state.warned) {
+      logger.warn(`[embed] batch inference failed: ${err instanceof Error ? err.message : String(err)}`);
+      state.warned = true;
+    }
+    return texts.map(() => null);
+  }
+}
+
+/**
  * Reset the singleton — used by tests to swap modes between cases. Production
  * callers should never use this.
  */

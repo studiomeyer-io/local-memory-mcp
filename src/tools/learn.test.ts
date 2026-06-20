@@ -386,16 +386,25 @@ describe('recall + search', () => {
 });
 
 describe('tool registry', () => {
-  it('exports exactly 21 tools with valid JSON Schema for each', async () => {
+  it('exports exactly 25 tools with valid JSON Schema for each', async () => {
     const { TOOLS, toMcpToolList } = await import('./registry.js');
-    expect(TOOLS.length).toBe(21);
+    expect(TOOLS.length).toBe(25);
     const listed = toMcpToolList();
-    expect(listed.length).toBe(21);
+    expect(listed.length).toBe(25);
     for (const t of listed) {
       expect(t.name).toMatch(/^memory_/);
       expect(typeof t.description).toBe('string');
       expect((t.inputSchema as Record<string, unknown>).type).toBe('object');
     }
+  });
+
+  it('registers the four v2.2.0 portability + lifecycle tools', async () => {
+    const { toMcpToolList } = await import('./registry.js');
+    const names = toMcpToolList().map((t) => t.name);
+    expect(names).toContain('memory_observation_supersede');
+    expect(names).toContain('memory_learn_bulk');
+    expect(names).toContain('memory_export');
+    expect(names).toContain('memory_import');
   });
 
   it('registers the four v2.1.0 lifecycle + reflection tools', async () => {

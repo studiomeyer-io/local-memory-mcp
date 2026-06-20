@@ -52,10 +52,37 @@ export function getDb(): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
-  // 5s lock-wait protects us when multiple MCP clients (e.g. Claude Desktop +
-  // Claude Code sharing the same file) race on the same SQLite. Without this
-  // any SQLITE_BUSY short-circuits the request instead of waiting briefly.
-  db.pragma('busy_timeout = 5000');
+  // 10s lock-wait protects us when multiple MCP clients (e.g. Claude Desktop +
+  // Claude Code + Cursor sharing the same file) race on the same SQLite.
+  // Without this any SQLITE_BUSY short-circuits the request instead of waiting
+  // briefly. Bumped from 5s → 10s (v2.2.0): a cold embedding model load on the
+  // first write of a session can hold the write lock for several seconds, and
+  // 5s was occasionally too tight on slower laptops with two clients attached.
+  db.pragma('busy_timeout = 10000');
+  // temp_store = MEMORY keeps transient B-trees (sorts, the RRF/asOf ORDER BYs)
+  // off disk. Part of the canonical 2026 production pragma set.
+  db.pragma('temp_store = MEMORY');
+  // Read-path performance for larger stores (v2.2.0). Pure optimisations with
+  // no correctness impact and graceful native fallback:
+  //   - cache_size = -64000  → 64 MB page cache (negative = KiB). The default
+  //     ~2 MB starts evicting hot index pages once a corpus passes a few
+  //     thousand rows; 64 MB keeps the FTS5 + vector + asOf indexes resident.
+  //   - mmap_size = 128 MB   → memory-mapped reads skip a userspace copy on the
+  //     hot search path. SQLite falls back to regular I/O where mmap is
+  //     unavailable. Caveat: on a network/FUSE volume mmap is advertised but
+  //     can be unreliable (an I/O fault on a mapped page is SIGBUS, not a
+  //     catchable error). Acceptable for the local-internal-disk target; set
+  //     MEMORY_DB_PATH onto a real local disk if you see SQLITE_IOERR_MMAP.
+  db.pragma('cache_size = -64000');
+  db.pragma('mmap_size = 134217728');
+  // WAL-growth guard (v2.2.0). All auto-checkpoints are PASSIVE and skip while
+  // a reader holds the file, so under a write burst (memory_learn_bulk /
+  // memory_import sharing the file with a live Claude Desktop reader) the WAL
+  // can balloon unbounded. journal_size_limit truncates it back after each
+  // checkpoint; wal_autocheckpoint is the default 1000 pages, set explicitly so
+  // the intent is on the page. (Research R1.)
+  db.pragma('wal_autocheckpoint = 1000');
+  db.pragma('journal_size_limit = 67108864');
 
   // Bootstrap schema — idempotent because of IF NOT EXISTS.
   // NOTE: db.exec() below is better-sqlite3's SQL-string executor

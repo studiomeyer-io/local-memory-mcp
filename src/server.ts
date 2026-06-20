@@ -24,7 +24,7 @@ import { closeDb, getDb } from './db/client.js';
 import { getHandler, toMcpToolList, TOOLS } from './tools/registry.js';
 
 const SERVER_NAME = 'local-memory-mcp';
-const SERVER_VERSION = '2.1.0';
+const SERVER_VERSION = '2.2.0';
 
 const INSTRUCTIONS = `Local Memory — Persistent memory for your AI assistant.
 
@@ -62,7 +62,21 @@ LIFECYCLE (v2.1.0+):
     most-used + stale learnings, hot entities, open decisions. Returns
     structured data PLUS markdown summary. No LLM call. Cheap to run.
 
-21 tools available. Call memory_guide() for help on any topic.`;
+LIFECYCLE + PORTABILITY (v2.2.0+):
+  - memory_observation_supersede({observationId, supersededById?}) — the
+    execution arm for memory_contradictions: retire a stale fact by setting
+    valid_to. The row stays for asOf queries but drops out of live search
+    and entity views. Pass supersededById to use the newer fact's valid_from
+    as the cutoff (Zep fact-supersession).
+  - memory_learn_bulk({items: [...]}) — batch-insert up to 500 learnings in
+    one atomic call (parallel embedding, exact-duplicate skip). For restores,
+    migrations, seeding a fresh DB.
+  - memory_export({includeSessions?, includeArchived?}) — dump everything to
+    a versioned JSON envelope. Embeddings re-derive on import.
+  - memory_import({data}) — load an export envelope. Additive + idempotent.
+    The same envelope also imports into the hosted tier (memory.studiomeyer.io).
+
+25 tools available. Call memory_guide() for help on any topic.`;
 
 process.stderr.write('[local-memory] imports loaded, bootstrapping db…\n');
 

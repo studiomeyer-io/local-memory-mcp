@@ -374,3 +374,109 @@ export function entityDelete(input: z.infer<typeof entityDeleteSchema>): ToolRes
 
   return { success: true, data: { id: input.id }, message: 'Entity und zugehörige Daten gelöscht.' };
 }
+
+// ─── observation_supersede (v2.2.0) ──────────────────
+//
+// The execution arm for the contradiction scanner. memory_contradictions
+// (v2.1.0) *surfaces* observation pairs that disagree but had no way to act on
+// them — a user who confirmed "fact A is stale, B replaces it" still had to
+// drop to raw SQL. This closes the loop with the Zep fact-supersession pattern,
+// kept fully local + LLM-free:
+//
+//   - Set `valid_to` on the older observation so it stops being "live". The row
+//     stays in the DB, so an asOf query (`entity_open({asOf})`) still surfaces
+//     it as the belief that was current before the cutoff. This is a tombstone,
+//     not a delete.
+//   - When `supersededById` is given we set the cutoff to the *newer*
+//     observation's `valid_from` — the canonical Zep semantics: the old fact
+//     was true right up until the new one was recorded. Pass `validTo` to
+//     override with an explicit instant; pass neither and we use now().
+//   - The embedding is intentionally KEPT (content didn't change). Live
+//     `memory_search` no longer surfaces it because v2.2.0 added a
+//     `valid_to IS NULL` gate to the observation leg of both the FTS and vector
+//     rankers (see search.ts) — so a retired fact disappears from live recall
+//     but stays reachable for point-in-time queries. The contradictions
+//     scanner already skipped `valid_to`-set rows since v2.1.0.
+export const observationSupersedeSchema = z.object({
+  observationId: z.string().min(1),
+  supersededById: z.string().min(1).optional(),
+  validTo: z
+    .string()
+    .refine((v) => !Number.isNaN(Date.parse(v)), {
+      message: 'validTo must be a parseable date string (ISO 8601 or SQLite-compatible)',
+    })
+    .optional(),
+});
+
+export function observationSupersede(input: z.infer<typeof observationSupersedeSchema>): ToolResult {
+  const db = getDb();
+
+  const older = db
+    .prepare('SELECT id, entity_id, valid_from, valid_to FROM entity_observations WHERE id = ?')
+    .get(input.observationId) as
+    | { id: string; entity_id: string; valid_from: string; valid_to: string | null }
+    | undefined;
+
+  if (!older) {
+    return { success: false, error: 'Observation not found.', code: 'NOT_FOUND' };
+  }
+  if (older.valid_to !== null) {
+    return {
+      success: true,
+      data: { observationId: older.id, entityId: older.entity_id, action: 'already_superseded', validTo: older.valid_to },
+      message: 'Beobachtung war bereits abgelöst.',
+    };
+  }
+
+  // Resolve the cutoff instant.
+  let validTo: string;
+  if (input.validTo) {
+    validTo = input.validTo;
+  } else if (input.supersededById) {
+    if (input.supersededById === input.observationId) {
+      return { success: false, error: 'An observation cannot supersede itself.', code: 'SELF_SUPERSEDE' };
+    }
+    const newer = db
+      .prepare('SELECT id, entity_id, valid_from FROM entity_observations WHERE id = ?')
+      .get(input.supersededById) as { id: string; entity_id: string; valid_from: string } | undefined;
+    if (!newer) {
+      return { success: false, error: 'Superseding observation not found.', code: 'SUPERSEDER_NOT_FOUND' };
+    }
+    // The superseding fact must belong to the SAME entity — using another
+    // entity's observation as the cutoff is semantically meaningless (retiring
+    // a fact about project A with a timestamp from a fact about person B).
+    if (newer.entity_id !== older.entity_id) {
+      return {
+        success: false,
+        error: 'supersededById belongs to a different entity than observationId.',
+        code: 'CROSS_ENTITY_SUPERSEDE',
+      };
+    }
+    validTo = newer.valid_from;
+  } else {
+    validTo = nowIso();
+  }
+
+  db.prepare('UPDATE entity_observations SET valid_to = ? WHERE id = ?').run(validTo, older.id);
+
+  // Soft signal: an inverted window (cutoff at/before the fact's own start)
+  // means the observation is never "live" at any instant. Allowed — a user may
+  // intentionally retire a fact retroactively — but worth surfacing so it's not
+  // a silent surprise in a later asOf query.
+  const invertedWindow = Date.parse(validTo) <= Date.parse(older.valid_from);
+
+  return {
+    success: true,
+    data: {
+      observationId: older.id,
+      entityId: older.entity_id,
+      action: 'superseded',
+      validTo,
+      ...(input.supersededById ? { supersededById: input.supersededById } : {}),
+      ...(invertedWindow
+        ? { note: 'validTo is at or before the observation valid_from — it will not be live at any point in time.' }
+        : {}),
+    },
+    message: 'Beobachtung abgelöst (Tombstone gesetzt, bleibt für asOf-Abfragen erhalten).',
+  };
+}

@@ -11,7 +11,7 @@
 ![License](https://img.shields.io/github/license/studiomeyer-io/local-memory-mcp?style=flat-square&color=22c55e&label=license)
 ![Last commit](https://img.shields.io/github/last-commit/studiomeyer-io/local-memory-mcp?style=flat-square&color=88c0d0&label=updated)
 ![GitHub stars](https://img.shields.io/github/stars/studiomeyer-io/local-memory-mcp?style=flat-square&color=ffd700&logo=github&label=stars)
-<!-- /badges -->**Persistent local memory for Claude, Cursor & Codex. 21 tools. Hybrid retrieval (BM25 + vector cosine, RRF). Bi-temporal asOf queries. LLM-free contradiction detection + reflection. Multilingual embeddings. No cloud. No API keys.**
+<!-- /badges -->**Persistent local memory for Claude, Cursor & Codex. 25 tools. Hybrid retrieval (BM25 + vector cosine, RRF). Bi-temporal asOf queries + fact supersession. LLM-free contradiction detection + reflection. Portable JSON export/import. Multilingual embeddings. No cloud. No API keys.**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@studiomeyer/local-memory-mcp)](https://www.npmjs.com/package/@studiomeyer/local-memory-mcp)
@@ -197,7 +197,7 @@ memory_learn_update({ learningId: "...", content: "…", confidence: 0.9 })
 
 `update` edits a live (non-archived) learning. If `content` changes we re-embed in the F4 atomic pattern (compute outside the transaction, write inside one sync `db.transaction()`). If the embedding write fails or vec is disabled, the now-stale old embedding is purged so cosine search can't surface a vector that no longer represents the live text. Bumps `usage_count` and sets `last_used` so an edit counts as a touch.
 
-**Trade-off — no audit trail in v2.1.** `update` overwrites the previous content. The old text is not retained anywhere. This keeps the schema clean for V2.1; v2.2 will add `memory_learn_history` plus an immutable `learnings_history` table for users who need point-in-time recovery. If you need an audit trail today, `memory_learn_archive(reason: "wrong")` the old learning and `memory_learn` the new one as a fresh row — the old text stays in the archived row.
+**Trade-off — no audit trail.** `update` overwrites the previous content. The old text is not retained anywhere. This keeps the schema clean; a future version may add `memory_learn_history` plus an immutable `learnings_history` table for users who need point-in-time recovery. If you need an audit trail today, `memory_learn_archive(reason: "wrong")` the old learning and `memory_learn` the new one as a fresh row — the old text stays in the archived row.
 
 ### Reflection — what's important right now
 
@@ -216,7 +216,7 @@ The Markdown is for the LLM to read at session start; the structured fields are 
 
 **Sleeptime via hooks.** Letta / Zep / Mem0 run reflection in a background "sleeptime" loop. We run on-demand because we're a stateless stdio daemon — but you get sleeptime semantics for free by wiring a Claude Code SessionStart or SessionEnd hook (or an n8n cron, or a `crontab` entry) that calls `memory_reflect`. The summary lands in the LLM's context at the same time as your `memory_session_start` snapshot. Zero new infrastructure.
 
-## Tools (21)
+## Tools (25)
 
 ### Sessions
 
@@ -236,6 +236,8 @@ The Markdown is for the LLM to read at session start; the structured fields are 
 
 **`memory_learn_update`** *(v2.1+)* -- Edit a live learning (`content` / `confidence` / `tags`). At least one field is required. Bumps `usage_count` + `last_used` so an edit counts as a touch. Re-embeds atomically when `content` changes (F4 pattern: compute outside the transaction, write inside one sync `db.transaction()`). Rejects edits to archived learnings with `code: 'ARCHIVED'`.
 
+**`memory_learn_bulk`** *(v2.2+)* -- Batch-insert up to 500 learnings in one atomic call. Each item takes the same fields as `memory_learn`. Exact-duplicate-only gatekeeper (no fuzzy merge) so the result is deterministic insert-or-skip; intra-batch duplicate contents collapse onto the first occurrence. Only the new contents are embedded, in one batched model forward pass. For restoring a backup, seeding a fresh DB, or migrating from another system.
+
 **When to use recall vs search:** Use `recall` when you want learnings specifically. Use `search` when you want to find anything across all types, including entities and decisions.
 
 ### Decisions
@@ -254,6 +256,8 @@ The Markdown is for the LLM to read at session start; the structured fields are 
 
 **`memory_contradictions`** *(v2.1+)* -- LLM-free scanner that surfaces observation pairs with high cosine similarity but disagreeing on negation markers or confidence. The AI client (Claude / Cursor) judges the candidates. Optional scope: `entityId` or `entityName + entityType`. Knobs: `minCosine` (default 0.75), `minConfidenceDrift` (default 0.2), `limit` (default 20). Requires `sqlite-vec` — returns `VECTOR_DISABLED` if not loaded.
 
+**`memory_observation_supersede`** *(v2.2+)* -- The execution arm for `memory_contradictions`: retire a stale observation by setting `valid_to` (a tombstone). The row stays in the DB so an `asOf` query still surfaces it, but it drops out of live `memory_search` and `memory_entity_open`. Pass `supersededById` to set the cutoff to the newer fact's `valid_from` (Zep fact-supersession), `validTo` for an explicit instant, or neither for `now()`. Same-entity + self-supersede guards; idempotent.
+
 **Recommended entity types:** `person`, `project`, `company`, `tool`, `concept`, `service`, `team`. Use whatever makes sense for your domain.
 
 ### Reflection
@@ -265,6 +269,12 @@ The Markdown is for the LLM to read at session start; the structured fields are 
 **`memory_profile`** -- Store personal info locally. Use `set` to store fields (name, role, preferences, language, timezone), use `get` to retrieve them. Your AI can read this at session start to personalize its behavior.
 
 **`memory_guide`** -- Built-in help. Topics: `quickstart` (how to get started), `session` (session workflow), `search` (how search works), `entities` (knowledge graph explained), `learn` (learning categories), `privacy` (where data lives, what is collected).
+
+### Portability *(v2.2+)*
+
+**`memory_export`** -- Dump the whole memory — learnings, decisions, entities, observations, relations, sessions, profile, goal — to a versioned, camelCase JSON envelope (`format: "studiomeyer-memory-export"`, `version: 1`). Embeddings are **not** exported; they're re-derived on import, so the file stays small and model-agnostic. Flags: `includeSessions` (default true), `includeArchived` (default true). You own your data — it's already a single SQLite file, and now it's a portable document too.
+
+**`memory_import`** -- Ingest a `memory_export` envelope (`{ data: <envelope> }`). **Purely additive and idempotent**: every write is `INSERT OR IGNORE` on the source id, so re-importing the same file is a no-op and it never clobbers an existing row. FK-safe ordering with dangling-reference skips (a counted skip, never a throw). Re-embeds on the fly. There is no `replace` mode by design — to wipe a local store, delete `memory.sqlite`. The same envelope also imports into the hosted [StudioMeyer Memory](https://memory.studiomeyer.io) tier, so this is your on-ramp when you outgrow a single machine.
 
 ## Tips
 
@@ -315,10 +325,12 @@ Override: `MEMORY_DB_PATH=/your/preferred/path.sqlite`
 | Duplicate Guard | Yes (FTS5 + similarity) | No | No | No | Unknown | Unknown | Unknown | Unknown |
 | Decision Tracking | **Yes (unique)** | No | No | No | No | No | No | No |
 | Session Context | Yes (auto-load) | Yes | No | No | No | No | Yes | Yes |
-| Tools | **21** | 17 | 5 | 29 | API | API | API | API |
+| Tools | **25** | 17 | 5 | 29 | API | API | API | API |
 | Bi-temporal asOf | **Yes (v2.1)** | Unknown | No | No | Yes | Yes | Partial | Unknown |
 | Contradiction scanner | **Yes (v2.1, LLM-free)** | No | No | No | LLM-driven | LLM-driven | No | No |
+| Fact supersession | **Yes (v2.2, asOf-preserving)** | No | No | No | LLM-driven | Yes | Partial | Unknown |
 | Reflection / consolidation | **Yes (v2.1, LLM-free)** | No | No | No | LLM-driven | Yes (sleeptime) | Yes (sleeptime) | No |
+| Portable export / import | **Yes (v2.2, JSON envelope)** | Unknown | No | No | API | API | `.af` file | Unknown |
 | Language | TypeScript | TypeScript | TypeScript | Python | Python | Python | Python | Python |
 | Storage | SQLite + sqlite-vec | SQLite | JSON file | ChromaDB | Cloud | Cloud | Various | FalkorDB + Qdrant |
 | API keys needed | **No** | No | No | No | Yes (cloud) | Yes (cloud) | Optional | Optional |
@@ -335,7 +347,7 @@ Two products, same team, different use cases:
 | | **local-memory-mcp** (this repo) | **StudioMeyer Memory** (hosted) |
 |---|---|---|
 | Where | Your machine (SQLite + sqlite-vec) | Cloud (Supabase EU Frankfurt) |
-| Tools | 21 | 56 |
+| Tools | 25 | 56 |
 | Search | FTS5 + sqlite-vec hybrid (RRF) | FTS5 + pgvector + cross-encoder reranking |
 | Embeddings | Local (multilingual-e5-small, 384-dim) | Cloud (multiple models, reranking) |
 | Multi-device | No | Yes |
@@ -344,7 +356,7 @@ Two products, same team, different use cases:
 | Install | `npx` or `.mcpb` (Linux / macOS / Windows) | [memory.studiomeyer.io](https://memory.studiomeyer.io) |
 | Repo | [local-memory-mcp](https://github.com/studiomeyer-io/local-memory-mcp) | [studiomeyer-memory](https://github.com/studiomeyer-io/studiomeyer-memory) (docs) |
 
-Start local. Upgrade when you need teams, multi-device sync, or cross-encoder rerank.
+Start local. Upgrade when you need teams, multi-device sync, or cross-encoder rerank — `memory_export` produces an envelope that imports straight into the hosted tier, so you carry your whole memory across with you.
 
 ## Also by StudioMeyer
 

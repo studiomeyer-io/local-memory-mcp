@@ -58,6 +58,13 @@ function ftsSearch(
       ? `AND search_fts.content_type IN (${types.map(() => '?').join(',')})`
       : '';
 
+  // Two visibility gates, mirroring how the live entity views work:
+  //   - archived learnings (archived = 1) never surface.
+  //   - superseded observations (valid_to IS NOT NULL) never surface in LIVE
+  //     search. They stay reachable through entity_open({asOf}) for
+  //     point-in-time queries. Added v2.2.0 alongside memory_observation_
+  //     supersede — without it a retired fact would vanish from the entity
+  //     view but still leak into unified search.
   const sql = `
     SELECT search_fts.content_id AS id,
            search_fts.content_type AS type,
@@ -67,8 +74,11 @@ function ftsSearch(
     FROM search_fts
     LEFT JOIN learnings l
       ON search_fts.content_type = 'learning' AND l.id = search_fts.content_id
+    LEFT JOIN entity_observations eo
+      ON search_fts.content_type = 'observation' AND eo.id = search_fts.content_id
     WHERE search_fts MATCH ?
       AND (search_fts.content_type != 'learning' OR COALESCE(l.archived, 0) = 0)
+      AND (search_fts.content_type != 'observation' OR eo.valid_to IS NULL)
       ${typeFilter}
     ORDER BY rank
     LIMIT ?
@@ -143,8 +153,11 @@ function vectorSearch(
     LEFT JOIN search_fts sfts ON sfts.content_id = vr.content_id
     LEFT JOIN learnings l
       ON sfts.content_type = 'learning' AND l.id = vr.content_id
+    LEFT JOIN entity_observations eo
+      ON sfts.content_type = 'observation' AND eo.id = vr.content_id
     WHERE sfts.content_id IS NOT NULL
       AND (sfts.content_type != 'learning' OR COALESCE(l.archived, 0) = 0)
+      AND (sfts.content_type != 'observation' OR eo.valid_to IS NULL)
       ${typeFilter}
     ORDER BY vr.distance
     LIMIT ?

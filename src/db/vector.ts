@@ -25,7 +25,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../lib/logger.js';
-import { embed, EMBEDDING_DIM, embedModelId } from '../lib/embed.js';
+import { embed, embedBatch, EMBEDDING_DIM, embedModelId } from '../lib/embed.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -275,6 +275,24 @@ export async function prepareEmbedding(text: string): Promise<Float32Array | nul
   } catch (err) {
     logger.warn(`[vector] prepareEmbedding failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
+  }
+}
+
+/**
+ * Batch variant of prepareEmbedding (v2.2.0). Returns a result array the same
+ * length as `texts` (each a 384-dim Float32Array or null), computed in ONE
+ * model forward pass via embedBatch. No-op fast path returns all-null when vec
+ * isn't loaded, so a caller never wastes inference on a DB that can't store
+ * the vectors. Used by memory_learn_bulk + memory_import.
+ */
+export async function prepareEmbeddingBatch(texts: string[]): Promise<(Float32Array | null)[]> {
+  if (!vectorEnabled || texts.length === 0) return texts.map(() => null);
+  try {
+    const vecs = await embedBatch(texts);
+    return vecs.map((v) => (v && v.length === EMBEDDING_DIM ? v : null));
+  } catch (err) {
+    logger.warn(`[vector] prepareEmbeddingBatch failed: ${err instanceof Error ? err.message : String(err)}`);
+    return texts.map(() => null);
   }
 }
 

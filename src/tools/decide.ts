@@ -27,20 +27,31 @@ export const decideSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
 });
 
+/**
+ * The canonical embedding text for a decision: title + decision + reasoning +
+ * alternatives, so a search for a reasoning fragment finds the decision. This
+ * is exported and reused by memory_import (export.ts) so a decision that is
+ * exported and re-imported gets the IDENTICAL vector it had when natively
+ * created — otherwise the two code paths would silently disagree and recall
+ * ranking would drift across a backup round-trip. (Critic R1 / Analyst R1.)
+ */
+export function decisionEmbeddingText(d: {
+  title?: unknown;
+  decision?: unknown;
+  reasoning?: unknown;
+  alternatives?: unknown;
+}): string {
+  return [d.title, d.decision, d.reasoning, d.alternatives]
+    .map((x) => (typeof x === 'string' ? x : ''))
+    .filter(Boolean)
+    .join('\n');
+}
+
 export async function decide(input: z.infer<typeof decideSchema>): Promise<ToolResult> {
   const db = getDb();
   const id = newId();
 
-  // Encode the *whole* decision so we can match by reasoning fragments too.
-  const embeddingText = [
-    input.title,
-    input.decision,
-    input.reasoning,
-    input.alternatives ?? '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-  const vec = await prepareEmbedding(embeddingText);
+  const vec = await prepareEmbedding(decisionEmbeddingText(input));
 
   const tx = db.transaction(() => {
     db.prepare(

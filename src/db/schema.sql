@@ -96,6 +96,17 @@ CREATE TABLE IF NOT EXISTS entity_observations (
 );
 CREATE INDEX IF NOT EXISTS idx_obs_entity ON entity_observations(entity_id);
 CREATE INDEX IF NOT EXISTS idx_obs_valid_to ON entity_observations(valid_to);
+-- asOf bi-temporal acceleration (v2.2.0). entity_open's point-in-time query
+-- filters `WHERE entity_id = ? AND datetime(valid_from) <= ?` and orders by
+-- `datetime(valid_from) DESC`. A plain index on valid_from can't serve a query
+-- that wraps the column in datetime(), so without this expression index the
+-- planner falls back to a per-entity observation scan + sort. The composite
+-- (entity_id, datetime(valid_from)) lets it seek by entity then range-scan the
+-- already-ordered validity axis. IF NOT EXISTS makes it a no-op on DBs that
+-- already have it; it is created on the next open for every existing user DB
+-- because schema.sql runs on every getDb().
+CREATE INDEX IF NOT EXISTS idx_obs_entity_validfrom_dt
+  ON entity_observations(entity_id, datetime(valid_from));
 
 -- ─── ENTITY RELATIONS (Knowledge Graph Edges) ───────
 CREATE TABLE IF NOT EXISTS entity_relations (

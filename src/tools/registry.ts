@@ -16,6 +16,7 @@ import {
   recall, recallSchema,
   learnArchive, learnArchiveSchema,
   learnUpdate, learnUpdateSchema,
+  learnBulk, learnBulkSchema,
 } from './learn.js';
 import { search, searchSchema } from './search.js';
 import { decide, decideSchema } from './decide.js';
@@ -26,8 +27,13 @@ import {
   entityOpen, entityOpenSchema,
   entityRelate, entityRelateSchema,
   entityDelete, entityDeleteSchema,
+  observationSupersede, observationSupersedeSchema,
 } from './entity.js';
 import { contradictions, contradictionsSchema } from './contradictions.js';
+import {
+  memoryExport, memoryExportSchema,
+  memoryImport, memoryImportSchema,
+} from './export.js';
 import { reflect, reflectSchema } from './reflect.js';
 import {
   insights, insightsSchema,
@@ -85,6 +91,12 @@ export const TOOLS: ToolDef[] = [
     handler: (input) => learnUpdate(input as z.infer<typeof learnUpdateSchema>),
   },
   {
+    name: 'memory_learn_bulk',
+    description: 'Batch-insert many learnings in one atomic call (parallel embed, exact-duplicate skip). For restores, migrations, seeding.',
+    schema: learnBulkSchema,
+    handler: (input) => learnBulk(input as z.infer<typeof learnBulkSchema>),
+  },
+  {
     name: 'memory_search',
     description: 'Unified search across learnings, decisions, entities, and observations (FTS5 + bm25).',
     schema: searchSchema,
@@ -139,6 +151,12 @@ export const TOOLS: ToolDef[] = [
     handler: (input) => contradictions(input as z.infer<typeof contradictionsSchema>),
   },
   {
+    name: 'memory_observation_supersede',
+    description: 'Retire an observation by setting valid_to (tombstone). Pairs with memory_contradictions. Pass supersededById to use the newer fact\'s valid_from as the cutoff (Zep fact-supersession). Row stays for asOf queries; drops out of live search/entity views.',
+    schema: observationSupersedeSchema,
+    handler: (input) => observationSupersede(input as z.infer<typeof observationSupersedeSchema>),
+  },
+  {
     name: 'memory_reflect',
     description: 'LLM-free reflection across recent memory: most-used + stale learnings, hot entities, open decisions. Returns structured data + markdown.',
     schema: reflectSchema,
@@ -167,6 +185,18 @@ export const TOOLS: ToolDef[] = [
     description: 'Read, set, or clear a single user goal stored in the profile table.',
     schema: goalSchema,
     handler: (input) => goal(input as z.infer<typeof goalSchema>),
+  },
+  {
+    name: 'memory_export',
+    description: 'Export the whole memory to a versioned JSON envelope (learnings, decisions, knowledge graph, sessions, profile). Embeddings are re-derived on import. Same envelope imports into memory.studiomeyer.io (hosted tier).',
+    schema: memoryExportSchema,
+    handler: (input) => memoryExport(input as z.infer<typeof memoryExportSchema>),
+  },
+  {
+    name: 'memory_import',
+    description: 'Import a memory_export envelope. Purely additive + idempotent (INSERT OR IGNORE on source ids), FK-safe, re-embeds on the fly. Pass {data: <envelope>}.',
+    schema: memoryImportSchema,
+    handler: (input) => memoryImport(input as z.infer<typeof memoryImportSchema>),
   },
   {
     name: 'memory_health',
@@ -243,11 +273,56 @@ function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
   return { type: 'object' };
 }
 
-export function toMcpToolList(): Array<{ name: string; description: string; inputSchema: JsonSchema }> {
+// ─── MCP tool annotations (2026 spec hints) ─────────
+// Clients read these to decide whether to auto-run a tool or ask the user
+// first. openWorldHint is false for EVERY tool — this server only ever touches
+// the local SQLite file, never an external/unbounded system. We annotate
+// behaviour honestly: idempotentHint means "repeating the call has no further
+// effect" (not "safe"); destructiveHint flags retire/delete/overwrite ops so a
+// client can gate them behind a confirmation.
+interface ToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint: boolean;
+}
+
+const ANNOTATIONS: Record<string, ToolAnnotations> = {
+  memory_session_start: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  memory_session_end: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  memory_learn: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  memory_recall: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  memory_learn_archive: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  memory_learn_update: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  memory_learn_bulk: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  memory_search: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  memory_decide: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  // NOT idempotent: a repeat call with a different summary UPDATEs the entity
+  // (entity.ts entityCreate), so the second call can change state. (R2 FINDING-A.)
+  memory_entity_create: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  memory_entity_observe: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  memory_entity_search: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  memory_entity_open: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  memory_entity_relate: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  memory_entity_delete: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  memory_observation_supersede: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  memory_contradictions: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  memory_reflect: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  memory_insights: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  memory_profile: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  memory_guide: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  memory_goal: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  memory_export: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  memory_import: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  memory_health: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+};
+
+export function toMcpToolList(): Array<{ name: string; description: string; inputSchema: JsonSchema; annotations?: ToolAnnotations }> {
   return TOOLS.map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: zodToJsonSchema(t.schema),
+    ...(ANNOTATIONS[t.name] ? { annotations: ANNOTATIONS[t.name] } : {}),
   }));
 }
 

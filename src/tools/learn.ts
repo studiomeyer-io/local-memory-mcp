@@ -15,7 +15,7 @@
  */
 import { z } from 'zod';
 import { getDb, newId, nowIso, escapeFtsQuery } from '../db/client.js';
-import { prepareEmbedding, writeEmbeddingSync, deleteEmbeddings, upsertEmbedding } from '../db/vector.js';
+import { prepareEmbedding, prepareEmbeddingBatch, writeEmbeddingSync, deleteEmbeddings, upsertEmbedding } from '../db/vector.js';
 import type { ToolResult, MemoryType, LearningCategory } from '../lib/types.js';
 
 // Re-export upsertEmbedding so existing test imports (`from './learn.js'`)
@@ -324,6 +324,135 @@ export async function learnUpdate(input: z.infer<typeof learnUpdateSchema>): Pro
       contentChanged: willChangeContent,
     },
     message: 'Learning aktualisiert.',
+  };
+}
+
+// ─── learn_bulk (v2.2.0) ─────────────────────────────
+//
+// Power-user batch insert. One MCP round-trip instead of N sequential
+// memory_learn calls — the win is real for restoring a backup, seeding a
+// fresh DB, or migrating from another memory system.
+//
+// Design choices (documented because they differ from single learn()):
+//   - Three phases: (1) a sync pre-scan decides insert-vs-skip per item and
+//     pre-generates ids for new rows; (2) ONLY the new contents are embedded,
+//     in ONE batched model forward pass (prepareEmbeddingBatch) — duplicates
+//     never waste an inference, and batching is the real throughput lever on a
+//     CPU-only Transformers.js backend (Promise.all of single embeds would run
+//     sequentially on the event loop, not in parallel); (3) one synchronous
+//     transaction bumps duplicates + inserts new rows with their precomputed
+//     vector.
+//   - Gatekeeper is EXACT-DUPLICATE-ONLY. The interactive learn() also runs a
+//     fuzzy "this looks similar, merge it" heuristic — deliberately omitted
+//     here. A bulk import wants deterministic insert-or-skip, not surprise
+//     merges that silently fold two distinct imported rows together.
+//   - Intra-batch exact duplicates collapse: a content repeated within the same
+//     batch reuses the first occurrence's pre-generated id and bumps its
+//     usage_count instead of inserting twice (tracked in the pre-scan map).
+//   - ATOMIC: the insert phase is one transaction. If a write throws on a
+//     genuine SQLite error (busy lock, disk full, constraint) the whole batch
+//     rolls back. Embedding failures do NOT throw — prepareEmbeddingBatch
+//     returns null per row, so a row simply lands without a vector (FTS5 still
+//     indexes it via the insert trigger).
+
+export const learnBulkSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        category: z.enum(LEARNING_CATEGORIES as [LearningCategory, ...LearningCategory[]]),
+        content: z.string().min(1).max(10000),
+        project: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        confidence: z.number().min(0).max(1).optional(),
+        source: z.string().optional(),
+        memoryType: z.enum(['episodic', 'semantic']).optional(),
+      })
+    )
+    .min(1)
+    .max(500),
+});
+
+type BulkPlan =
+  | { kind: 'dup'; index: number; id: string }
+  | { kind: 'new'; index: number; id: string; content: string };
+
+export async function learnBulk(input: z.infer<typeof learnBulkSchema>): Promise<ToolResult> {
+  const db = getDb();
+  const exactStmt = db.prepare('SELECT id FROM learnings WHERE content = ? AND archived = 0 LIMIT 1');
+
+  // Phase 1 (sync): decide insert-vs-skip per item BEFORE embedding so dups
+  // never cost an inference. Pre-generate ids for new items and remember them
+  // so an intra-batch repeat collapses onto the first occurrence.
+  const plan: BulkPlan[] = [];
+  const seenNew = new Map<string, string>(); // content -> pre-generated id
+  for (let i = 0; i < input.items.length; i++) {
+    const content = input.items[i]!.content;
+    const existing = exactStmt.get(content) as { id: string } | undefined;
+    if (existing) {
+      plan.push({ kind: 'dup', index: i, id: existing.id });
+      continue;
+    }
+    const seen = seenNew.get(content);
+    if (seen) {
+      plan.push({ kind: 'dup', index: i, id: seen });
+      continue;
+    }
+    const id = newId();
+    seenNew.set(content, id);
+    plan.push({ kind: 'new', index: i, id, content });
+  }
+
+  // Phase 2 (async): embed ONLY the new contents, in one batched forward pass.
+  const newPlans = plan.filter((p): p is Extract<BulkPlan, { kind: 'new' }> => p.kind === 'new');
+  const vecs = await prepareEmbeddingBatch(newPlans.map((p) => p.content));
+  const vecMap = new Map<string, Float32Array | null>();
+  newPlans.forEach((p, i) => vecMap.set(p.id, vecs[i] ?? null));
+
+  // Phase 3 (sync, single transaction): bump dups, insert new + embedding.
+  const results: Array<{ index: number; id: string; action: 'added' | 'skipped_duplicate' }> = [];
+  let added = 0;
+  let skipped = 0;
+
+  const tx = db.transaction(() => {
+    for (const p of plan) {
+      if (p.kind === 'dup') {
+        db.prepare('UPDATE learnings SET usage_count = usage_count + 1, last_used = ? WHERE id = ?').run(
+          nowIso(),
+          p.id
+        );
+        results.push({ index: p.index, id: p.id, action: 'skipped_duplicate' });
+        skipped++;
+        continue;
+      }
+
+      const it = input.items[p.index]!;
+      const memoryType = it.memoryType ?? classifyMemoryType(it.content, it.category);
+      db.prepare(
+        `INSERT INTO learnings
+         (id, date, category, content, project, tags_json, confidence, source, memory_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        p.id,
+        nowIso(),
+        it.category,
+        it.content,
+        it.project ?? null,
+        JSON.stringify(it.tags ?? []),
+        it.confidence ?? 0.7,
+        it.source ?? null,
+        memoryType
+      );
+      writeEmbeddingSync(db, p.id, 'learning', vecMap.get(p.id) ?? null);
+      results.push({ index: p.index, id: p.id, action: 'added' });
+      added++;
+    }
+  });
+  tx();
+
+  return {
+    success: true,
+    data: { total: input.items.length, added, skipped, results },
+    message: `${added} Learnings hinzugefügt, ${skipped} Duplikate übersprungen.`,
   };
 }
 

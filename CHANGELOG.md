@@ -1,5 +1,43 @@
 # Changelog
 
+## [2.2.0] — 2026-06-20
+
+Portability + lifecycle release. 21 → **25 tools**, 159 → **194 tests**. No breaking schema change (one additive index, created via `IF NOT EXISTS` on the next open of any existing DB).
+
+### Added — `memory_export` / `memory_import` (portable JSON envelope)
+
+Your memory is now a file you can move. `memory_export` dumps everything — learnings, decisions, entities, observations, relations, sessions, profile, goal — into a versioned, camelCase JSON envelope (`format: "studiomeyer-memory-export"`, `version: 1`). Embeddings are **not** exported: they're a derived artifact and are re-computed on import with whatever model the importing machine runs, so the envelope stays small and model-agnostic. `memory_import` ingests that envelope: **purely additive and idempotent** (every write is `INSERT OR IGNORE` keyed on the source id; entities additionally dedupe on `UNIQUE(name, entity_type)`), so re-importing the same file twice is a no-op and importing into a populated DB never clobbers an existing row. Referential integrity is preserved by FK-safe ordering (sessions → entities → observations → relations) plus dangling-reference skips (an observation whose entity is absent, or a relation whose endpoint is absent, is skipped and counted, never throws). There is deliberately **no `replace` mode** — wiping a local store is `rm memory.sqlite`. The same envelope also imports into the hosted StudioMeyer Memory tier, so the local server is an on-ramp, not a dead end.
+
+### Added — `memory_observation_supersede` (Zep-style fact supersession)
+
+The execution arm for `memory_contradictions`. The scanner (v2.1) *surfaces* observation pairs that disagree but couldn't act on them. `memory_observation_supersede` retires the stale fact by setting `valid_to` (a tombstone): the row stays in the DB so an `asOf` query still surfaces it as the belief that was current before the cutoff, but it drops out of live `memory_search` and `memory_entity_open`. Pass `supersededById` to set the cutoff to the newer fact's `valid_from` (the canonical Zep semantics — the old fact was true right up until the new one was recorded), or `validTo` for an explicit instant, or neither for `now()`. Guards: same-entity check (`CROSS_ENTITY_SUPERSEDE`), self-supersede check, idempotent re-run (`already_superseded`), and an inverted-window note.
+
+### Added — search visibility gate for superseded observations
+
+`memory_search` (both the FTS5/BM25 and the vector/cosine legs) now filters out superseded observations (`valid_to IS NOT NULL`), mirroring the existing archived-learnings gate. Without it a retired fact would vanish from the entity view but still leak into unified search. Superseded facts remain reachable via `memory_entity_open({asOf})`.
+
+### Added — `memory_learn_bulk` (atomic batch insert)
+
+One MCP round-trip instead of N sequential `memory_learn` calls — for restoring a backup, seeding a fresh DB, or migrating from another system. Three phases: a sync pre-scan decides insert-vs-skip per item (exact-duplicate only — no fuzzy merge surprises), then **only the new contents are embedded in one batched model forward pass**, then a single transaction inserts. Intra-batch duplicate contents collapse onto the first occurrence. Up to 500 items.
+
+### Added — `embedBatch` / `prepareEmbeddingBatch` (one forward pass)
+
+`Promise.all(texts.map(embed))` does **not** parallelise on a CPU-only Transformers.js backend — JS is single-threaded and each inference is synchronous compute, so they run back-to-back. The real throughput lever is handing the whole array to the pipeline at once (one batched forward pass). Used by `memory_learn_bulk` and `memory_import`.
+
+### Added — MCP tool annotations
+
+All 25 tools now ship `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint` (always `false` — this server only ever touches the local SQLite file). Clients use these to decide auto-run vs confirm; destructive ops (`memory_entity_delete`, `memory_observation_supersede`, `memory_learn_archive`, `memory_learn_update`) are flagged so a client can gate them behind a confirmation.
+
+### Performance — SQLite pragma tuning + asOf index
+
+- New expression index `idx_obs_entity_validfrom_dt ON entity_observations(entity_id, datetime(valid_from))` — the `asOf` query wraps `datetime(valid_from)`, which a plain index can't serve, so large entities previously did a per-entity observation scan + sort.
+- Pragmas: `busy_timeout` 5s → 10s (cold model load under a shared file), `cache_size` → 64 MB, `temp_store = MEMORY`, `mmap_size = 128 MB`, plus a WAL-growth guard (`journal_size_limit = 64 MB` + explicit `wal_autocheckpoint = 1000`) so a `memory_learn_bulk` / `memory_import` burst can't balloon the WAL while a reader holds the file.
+
+### Internal
+
+- `decisionEmbeddingText()` factored out of `decide()` and reused by `memory_import`, so a decision exported and re-imported keeps the identical vector (title + decision + reasoning + alternatives) it had when natively created.
+- 2-round dedicated-agent code review (Critic + Analyst + Research × R1, verify + regression-hunt × R2). R1 found a version-guard hole (NaN/0 accepted), a `decisions.reasoning` NOT-NULL import hole, a cross-entity supersede hole, and a misleading "parallel embed" claim; all fixed and re-verified.
+
 ## [2.1.0] — 2026-05-29
 
 ### Added — Bi-temporal asOf queries (`memory_entity_open`)
