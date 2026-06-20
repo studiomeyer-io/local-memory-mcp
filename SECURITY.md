@@ -37,6 +37,10 @@ No analytics or identifiers are sent. The HTTPS request is to the Hugging Face H
 
 There is no path by which a user-supplied SQL query selects a different shared object or invokes loadExtension at runtime — `db.loadExtension` is called exactly once per Database connection, with a path determined by the `sqlite-vec` npm package itself.
 
+### v2.2.0 — portability tools add no new external surface
+
+`memory_export` reads the local database and returns a JSON envelope to the calling MCP client; it writes nothing to disk and makes no network call. `memory_import` reads a JSON envelope passed in by the client and writes rows to the same local SQLite file via parameterized `INSERT OR IGNORE` statements (no SQL is built from envelope strings — all values are bound parameters). Re-embedding on import uses the same local pipeline as any write and obeys `MEMORY_EMBED_DISABLED`. `memory_learn_bulk` and `memory_observation_supersede` are likewise pure local SQLite operations. None of the v2.2 tools introduce a network, shell, or filesystem-write surface beyond the single SQLite file and the one opt-out model fetch documented above.
+
 ## Known SAST Scanner False Positives
 
 Some automated security scanners flag patterns in this codebase that look risky in isolation but are safe in context. This section documents them so reviewers can verify quickly.

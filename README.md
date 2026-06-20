@@ -21,6 +21,8 @@ Your AI assistant forgets everything when you close the chat. This fixes that.
 
 Learnings, decisions, people, projects — stored in a **single SQLite file** on your machine that never leaves your computer. Built-in Knowledge Graph, duplicate detection, FTS5 keyword search, and (new in v2) **hybrid retrieval** that fuses BM25 with on-device vector cosine via Reciprocal Rank Fusion. The embedding model is multilingual (DE / EN / ES / 100+ languages) and runs locally — no API keys, no cloud.
 
+📄 **Deep dive:** [WHITEPAPER.md](WHITEPAPER.md) — architecture, design principles, the local-first contract, and an honest comparison vs. other memory systems.
+
 > **Not affiliated with [`danieleugenewilliams/local-memory-releases`](https://github.com/danieleugenewilliams/local-memory-releases)** — that is a different "Local Memory" project with the same descriptive name. This package is published as [`@studiomeyer/local-memory-mcp`](https://www.npmjs.com/package/@studiomeyer/local-memory-mcp) — always use the scoped name to disambiguate.
 
 ## A note from us
@@ -47,10 +49,10 @@ claude mcp add memory -- npx -y @studiomeyer/local-memory-mcp
 
 | Platform | Bundle |
 |---|---|
-| Linux x64 | `local-memory-mcp-2.1.0-linux-x64.mcpb` |
-| macOS Apple Silicon | `local-memory-mcp-2.1.0-darwin-arm64.mcpb` |
-| macOS Intel | `local-memory-mcp-2.1.0-darwin-x64.mcpb` |
-| Windows x64 | `local-memory-mcp-2.1.0-win32-x64.mcpb` |
+| Linux x64 | `local-memory-mcp-2.2.0-linux-x64.mcpb` |
+| macOS Apple Silicon | `local-memory-mcp-2.2.0-darwin-arm64.mcpb` |
+| macOS Intel | `local-memory-mcp-2.2.0-darwin-x64.mcpb` |
+| Windows x64 | `local-memory-mcp-2.2.0-win32-x64.mcpb` |
 
 Each bundle is platform-specific because `better-sqlite3` is a native module — the matching `.node` binary is shipped inside the bundle so you don't need a build toolchain.
 
@@ -185,6 +187,15 @@ Surfaces observation pairs that are semantically very close (cosine similarity a
 LLM-free on purpose — the no-API-key promise holds. The heuristic is conservative; the AI client judges. Pure duplicates (no negation, no confidence drift) are not flagged. The cosine math runs in SQL via `vec_distance_cosine`, so the extension must be loaded; on platforms where it isn't, the tool returns `VECTOR_DISABLED` with a clear message instead of degrading silently.
 
 **Calibration.** Default `minCosine = 0.75` follows 2026 retriever-tuning literature (SparseCL on Arguana; Milvus threshold-tuning guidance) which finds a sharp false-positive rise below 0.7. Lower to 0.6 for recall-heavy use, raise to 0.85 for precision-heavy. The negation regex covers EN / DE / ES / Catalan / Portuguese / Italian / French — the seven languages multilingual-e5-small handles strongest.
+
+### Supersede — retire a stale fact (v2.2)
+
+```text
+memory_observation_supersede({ observationId: "..." })
+memory_observation_supersede({ observationId: "...", supersededById: "..." })
+```
+
+The scanner *finds* a stale fact; `memory_observation_supersede` *acts* on it. It sets the older observation's `valid_to` (a tombstone) so the fact stops surfacing in live `memory_search` and `memory_entity_open` — but the row stays in the database, so an `asOf` query still returns it as the belief that was current before the cutoff. This is the Zep fact-supersession pattern: invalidate, never delete. Pass `supersededById` and the cutoff becomes the newer fact's `valid_from` (the old fact was true right up until the new one was recorded); pass `validTo` for an explicit instant, or neither for now. Same-entity and self-supersede guards keep the operation sane, and a second call is idempotent (`already_superseded`).
 
 ### Archive + update — lifecycle for learnings
 
