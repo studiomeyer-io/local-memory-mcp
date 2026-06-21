@@ -458,10 +458,38 @@ export async function learnBulk(input: z.infer<typeof learnBulkSchema>): Promise
 
 // ─── recall ──────────────────────────────────────────
 
+// recall is the quick, FTS5-only keyword path over LEARNINGS specifically
+// (memory_search is the hybrid, cross-type surface). v2.3.0 adds optional
+// project/tags scoping — both columns live directly on `learnings`, so the
+// filter is a cheap WHERE with no extra join. tags matches rows whose tags_json
+// array contains ANY of the given tags (json_each, exact membership).
 export const recallSchema = z.object({
   query: z.string().optional(),
   limit: z.number().int().min(1).max(100).optional(),
+  project: z.string().min(1).optional(),
+  tags: z.array(z.string().min(1)).min(1).optional(),
 });
+
+// Shared learnings-scope predicate for recall. `alias` is the table alias used
+// in the surrounding query ('l' in the FTS join, '' for the bare-table paths).
+function recallScopeClause(
+  input: z.infer<typeof recallSchema>,
+  alias: string
+): { clause: string; args: unknown[] } {
+  const col = alias ? `${alias}.` : '';
+  const parts: string[] = [];
+  const args: unknown[] = [];
+  if (input.project !== undefined) {
+    parts.push(`${col}project = ?`);
+    args.push(input.project);
+  }
+  if (input.tags && input.tags.length > 0) {
+    const ph = input.tags.map(() => '?').join(',');
+    parts.push(`EXISTS (SELECT 1 FROM json_each(${col}tags_json) WHERE value IN (${ph}))`);
+    args.push(...input.tags);
+  }
+  return { clause: parts.length > 0 ? `AND ${parts.join(' AND ')}` : '', args };
+}
 
 export function recall(input: z.infer<typeof recallSchema>): ToolResult {
   const db = getDb();
@@ -469,21 +497,24 @@ export function recall(input: z.infer<typeof recallSchema>): ToolResult {
 
   if (!input.query || input.query.trim().length === 0) {
     // No query → return most recent learnings
+    const scope = recallScopeClause(input, '');
     const rows = db
       .prepare(
         `SELECT id, date, category, content, project, confidence, memory_type
          FROM learnings
          WHERE archived = 0
+         ${scope.clause}
          ORDER BY date DESC
          LIMIT ?`
       )
-      .all(limit);
+      .all(...scope.args, limit);
     return { success: true, data: { results: rows, count: (rows as unknown[]).length } };
   }
 
   // FTS5 search
   try {
     const fts = escapeFtsQuery(input.query);
+    const scope = recallScopeClause(input, 'l');
     const rows = db
       .prepare(
         `SELECT l.id, l.date, l.category, l.content, l.project, l.confidence, l.memory_type,
@@ -492,22 +523,25 @@ export function recall(input: z.infer<typeof recallSchema>): ToolResult {
          JOIN learnings l ON l.id = search_fts.content_id
          WHERE search_fts MATCH ? AND search_fts.content_type = 'learning'
          AND l.archived = 0
+         ${scope.clause}
          ORDER BY rank
          LIMIT ?`
       )
-      .all(fts, limit);
+      .all(fts, ...scope.args, limit);
     return { success: true, data: { results: rows, count: (rows as unknown[]).length } };
   } catch {
     // Fallback to LIKE if FTS query parsing fails
+    const scope = recallScopeClause(input, '');
     const rows = db
       .prepare(
         `SELECT id, date, category, content, project, confidence, memory_type
          FROM learnings
          WHERE content LIKE ? AND archived = 0
+         ${scope.clause}
          ORDER BY date DESC
          LIMIT ?`
       )
-      .all(`%${input.query}%`, limit);
+      .all(`%${input.query}%`, ...scope.args, limit);
     return { success: true, data: { results: rows, count: (rows as unknown[]).length } };
   }
 }
