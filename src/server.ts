@@ -24,7 +24,7 @@ import { closeDb, getDb } from './db/client.js';
 import { getHandler, toMcpToolList, TOOLS } from './tools/registry.js';
 
 const SERVER_NAME = 'local-memory-mcp';
-const SERVER_VERSION = '2.2.0';
+const SERVER_VERSION = '2.3.0';
 
 const INSTRUCTIONS = `Local Memory — Persistent memory for your AI assistant.
 
