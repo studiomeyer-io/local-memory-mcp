@@ -24,7 +24,7 @@ import { closeDb, getDb } from './db/client.js';
 import { getHandler, toMcpToolList, TOOLS } from './tools/registry.js';
 
 const SERVER_NAME = 'local-memory-mcp';
-const SERVER_VERSION = '2.2.0';
+const SERVER_VERSION = '2.3.0';
 
 const INSTRUCTIONS = `Local Memory — Persistent memory for your AI assistant.
 
@@ -96,9 +96,23 @@ async function main(): Promise<void> {
 
   // Bootstrap the DB early so any schema errors surface before we announce ready.
   try {
-    getDb();
+    const db = getDb();
     logger.info('Database ready');
     process.stderr.write('[local-memory] database ready\n');
+    // v2.3.0 entity-embedding backfill: existing DBs created before entities
+    // were embeddable have entity rows with no vector, so vector/hybrid search
+    // over entities misses them. Run a one-shot, idempotent, best-effort
+    // backfill at boot — it no-ops on a fully-backfilled DB and never blocks
+    // startup (a failure just leaves rows FTS-only, retried next boot).
+    try {
+      const { isVectorEnabled, backfillEntityEmbeddings } = await import('./db/vector.js');
+      if (isVectorEnabled()) {
+        const n = await backfillEntityEmbeddings(db);
+        if (n > 0) process.stderr.write(`[local-memory] backfilled ${n} entity embedding(s)\n`);
+      }
+    } catch (err) {
+      logger.warn(`[local-memory] entity embedding backfill skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
   } catch (err) {
     logger.logError('Database init failed', err);
     process.stderr.write('[local-memory] database init failed: ' + (err instanceof Error ? err.stack ?? err.message : String(err)) + '\n');

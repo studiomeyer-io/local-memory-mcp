@@ -26,6 +26,13 @@
  * pairs even for power users with thousands of observations spread across
  * dozens of entities.
  *
+ * v2.3.0 perf cap: per-entity N is hard-capped by `maxObservationsPerEntity`
+ * (default 200) via a windowed CTE that keeps only the freshest live+embedded
+ * observations per entity before the self-join. This enforces the bound the
+ * earlier docstring only *hoped* for — a single entity with thousands of
+ * observations is now a fixed worst case (200·199/2 ≈ 20k cosine calls), not a
+ * quadratic cliff.
+ *
  * Output schema:
  *   - `pairs`: list of contradiction candidates, each with the older +
  *     newer observation, the cosine similarity, and the reasons flagged.
@@ -68,6 +75,11 @@ export const contradictionsSchema = z.object({
   minCosine: z.number().min(0).max(1).optional(),
   minConfidenceDrift: z.number().min(0).max(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
+  // P3.2 perf cap (v2.3.0): hard ceiling on how many of each entity's most-
+  // recent live observations enter the O(N^2) self-join. The docstring warned
+  // about the quadratic cliff; this enforces it. One entity with thousands of
+  // observations would otherwise produce millions of vec_distance_cosine calls.
+  maxObservationsPerEntity: z.number().int().min(2).max(2000).optional(),
 });
 
 type ContradictionRow = {
@@ -105,6 +117,14 @@ export function contradictions(input: z.infer<typeof contradictionsSchema>): Too
   const minCosine = input.minCosine ?? 0.75;
   const minConfDrift = input.minConfidenceDrift ?? 0.2;
   const limit = input.limit ?? 20;
+  // Default cap of 200 most-recent live observations per entity. The pair count
+  // for one entity is then bounded by 200*199/2 ≈ 20k vec_distance_cosine calls
+  // regardless of how many observations it actually has — turning the quadratic
+  // cliff into a fixed worst case. Power users who genuinely need a wider window
+  // can raise it (schema max 2000). Observations beyond the cap are the OLDEST
+  // ones (we keep the freshest by valid_from), which are also the least likely
+  // to be the "current" side of a live contradiction.
+  const maxObsPerEntity = input.maxObservationsPerEntity ?? 200;
 
   // Resolve scope. Order of precedence: entityId > entityName + entityType >
   // global scan. If a lookup misses we return an explicit NOT_FOUND so the
@@ -148,8 +168,35 @@ export function contradictions(input: z.infer<typeof contradictionsSchema>): Too
   // surface first. Ties broken by from_a DESC so newer pairs win.
   const overFetch = Math.min(limit * 5, 500);
 
-  const scopeFilter = entityScopeId ? 'AND a.entity_id = ?' : '';
+  // P3.2 perf cap (v2.3.0): a windowed CTE keeps only the `maxObsPerEntity`
+  // freshest LIVE+EMBEDDED observations per entity BEFORE the self-join. The
+  // embeddings JOIN is inside the CTE so only observations that can actually be
+  // compared count toward the cap (legacy obs without a vector were already
+  // dropped by the join, now they don't waste a cap slot either). The self-join
+  // then runs over this bounded set, so the pair count for any single entity is
+  // <= maxObsPerEntity*(maxObsPerEntity-1)/2 no matter how many observations it
+  // has accumulated. Ordering inside the partition is valid_from DESC, id DESC
+  // so the kept rows are deterministic and the freshest.
+  const scopeFilter = entityScopeId ? 'WHERE o.entity_id = ?' : '';
   const sql = `
+    WITH live_obs AS (
+      SELECT o.id,
+             o.entity_id,
+             o.content,
+             o.confidence,
+             o.valid_from,
+             em.embedding AS embedding,
+             ROW_NUMBER() OVER (
+               PARTITION BY o.entity_id
+               ORDER BY datetime(o.valid_from) DESC, o.id DESC
+             ) AS rn
+      FROM entity_observations o
+      JOIN embeddings em ON em.content_id = o.id
+      ${scopeFilter ? scopeFilter + ' AND o.valid_to IS NULL' : 'WHERE o.valid_to IS NULL'}
+    ),
+    capped AS (
+      SELECT * FROM live_obs WHERE rn <= ?
+    )
     SELECT *
     FROM (
       SELECT a.entity_id AS entity_id,
@@ -157,22 +204,17 @@ export function contradictions(input: z.infer<typeof contradictionsSchema>): Too
              e.entity_type AS entity_type,
              a.id AS id_a,
              b.id AS id_b,
-             (1.0 - vec_distance_cosine(ea.embedding, eb.embedding)) AS cosine_sim,
+             (1.0 - vec_distance_cosine(a.embedding, b.embedding)) AS cosine_sim,
              a.content AS content_a,
              b.content AS content_b,
              a.confidence AS conf_a,
              b.confidence AS conf_b,
              a.valid_from AS from_a,
              b.valid_from AS from_b
-      FROM entity_observations a
-      JOIN entity_observations b
+      FROM capped a
+      JOIN capped b
         ON b.entity_id = a.entity_id AND b.id < a.id
-      JOIN embeddings ea ON ea.content_id = a.id
-      JOIN embeddings eb ON eb.content_id = b.id
       JOIN entities e ON e.id = a.entity_id
-      WHERE a.valid_to IS NULL
-        AND b.valid_to IS NULL
-        ${scopeFilter}
     ) AS pairs
     WHERE cosine_sim >= ?
     ORDER BY cosine_sim DESC, from_a DESC
@@ -181,6 +223,7 @@ export function contradictions(input: z.infer<typeof contradictionsSchema>): Too
 
   const args: unknown[] = [];
   if (entityScopeId) args.push(entityScopeId);
+  args.push(maxObsPerEntity);
   args.push(minCosine);
   args.push(overFetch);
 
@@ -253,6 +296,7 @@ export function contradictions(input: z.infer<typeof contradictionsSchema>): Too
       thresholds: {
         minCosine,
         minConfidenceDrift: minConfDrift,
+        maxObservationsPerEntity: maxObsPerEntity,
       },
     },
     message:

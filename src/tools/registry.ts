@@ -21,7 +21,7 @@ import {
 import { search, searchSchema } from './search.js';
 import { decide, decideSchema } from './decide.js';
 import {
-  entityCreate, entityCreateSchema,
+  entityCreateEmbedded, entityCreateSchema,
   entityObserve, entityObserveSchema,
   entitySearch, entitySearchSchema,
   entityOpen, entityOpenSchema,
@@ -74,7 +74,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'memory_recall',
-    description: 'Quick recall: keyword search on learnings, or omit query for most-recent.',
+    description: 'Quick FTS5 keyword recall over learnings only (no vector/hybrid — use memory_search for that). Optional project/tags scoping. Omit query for most-recent.',
     schema: recallSchema,
     handler: (input) => recall(input as z.infer<typeof recallSchema>),
   },
@@ -98,7 +98,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'memory_search',
-    description: 'Unified search across learnings, decisions, entities, and observations (FTS5 + bm25).',
+    description: 'Unified hybrid search across learnings, decisions, entities, and observations (FTS5 BM25 + vector cosine fused with RRF). mode: fts|vector|hybrid (default hybrid). Optional project/tags scoping.',
     schema: searchSchema,
     handler: (input) => search(input as z.infer<typeof searchSchema>),
   },
@@ -110,9 +110,9 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'memory_entity_create',
-    description: 'Create an entity explicitly (without an initial observation). Idempotent on name+entityType.',
+    description: 'Create an entity explicitly (without an initial observation). Idempotent on name+entityType. Embeds name+summary so vector/hybrid search over entities finds it.',
     schema: entityCreateSchema,
-    handler: (input) => entityCreate(input as z.infer<typeof entityCreateSchema>),
+    handler: (input) => entityCreateEmbedded(input as z.infer<typeof entityCreateSchema>),
   },
   {
     name: 'memory_entity_observe',
@@ -146,7 +146,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'memory_contradictions',
-    description: 'Scan observation pairs with high cosine similarity but disagreeing negation/confidence. LLM-free heuristic. Requires sqlite-vec.',
+    description: 'Scan observation pairs with high cosine similarity but disagreeing negation/confidence. LLM-free heuristic. Requires sqlite-vec. Per-entity observations are capped (maxObservationsPerEntity, default 200) to bound the O(N^2) self-join.',
     schema: contradictionsSchema,
     handler: (input) => contradictions(input as z.infer<typeof contradictionsSchema>),
   },

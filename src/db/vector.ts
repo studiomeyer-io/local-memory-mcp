@@ -192,19 +192,22 @@ export function vectorStatus(): { enabled: boolean; error: string | null } {
  * `entityObserve`). Living in the db layer matches the dependency direction
  * `tools/* → db/* → lib/*`.
  *
- * F10 cleanup (Critic R1): removed the dead `'entity'` arm from the
- * contentType union since entities themselves are not embedded — only their
- * observations are. The single source of truth for "what is embedded" is now
- * the union itself.
+ * v2.3.0 (entity embedding bugfix): `'entity'` is now a first-class embeddable
+ * content type. Earlier releases deliberately excluded it — the reasoning was
+ * that an entity row carries only a name+summary while its attached
+ * observations hold the semantic surface. But `searchSchema` advertised
+ * 'entity' in its `types` enum AND `mode:'vector'` accepted it, so
+ * `memory_search({mode:'vector', types:['entity']})` always returned zero — a
+ * silent capability lie. We close that by embedding `name + summary` on
+ * create/observe (atomic F4 pattern) plus a one-shot boot backfill
+ * (`backfillEntityEmbeddings`). Entities stay reachable through their
+ * observations too — the entity vector is an additional recall surface, not a
+ * replacement.
  *
- * R2-7 doc-strengthen (Critic R2): the DB column is just a TEXT aux column
- * with no constraint, so a raw-SQL caller could write any string into it.
- * Do NOT extend this union — entity-level embedding is intentionally not
- * supported because entity rows carry only a name+summary while their
- * attached observations carry the semantic surface. If you need entity
- * recall, embed the observations.
+ * The DB column is still an unconstrained TEXT aux column; the union is the
+ * single source of truth for what the tool layer is allowed to write.
  */
-export type EmbeddingContentType = 'learning' | 'decision' | 'observation';
+export type EmbeddingContentType = 'learning' | 'decision' | 'observation' | 'entity';
 
 /**
  * @deprecated Since v2.0.0 R2 — prefer `prepareEmbedding` + `writeEmbeddingSync`
@@ -349,6 +352,79 @@ export function deleteEmbeddings(contentIds: string[], db: Database): void {
   } catch (err) {
     logger.warn(`[vector] cascade delete failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/**
+ * Build the canonical embeddable text for an entity (v2.3.0). Mirrors the
+ * surface the FTS5 `entities_*` triggers index: name as the title, then the
+ * summary plus the entity_type. Concatenated into one passage so the vector
+ * captures the same signal a text query would hit. Exported so the create /
+ * observe write paths and the backfill all derive the string identically —
+ * one source of truth for "what an entity embeds to".
+ */
+export function entityEmbedText(name: string, summary: string | null, entityType: string): string {
+  return `${name} ${summary ?? ''} ${entityType}`.trim();
+}
+
+/**
+ * One-shot boot backfill for entity embeddings (v2.3.0 entity-embedding fix).
+ *
+ * Pre-v2.3.0 entities were never embedded, so on an existing user DB every
+ * entity row is missing from `embeddings` and `memory_search({mode:'vector',
+ * types:['entity']})` returns nothing for them. New writes embed inline; this
+ * closes the gap for rows created before the upgrade.
+ *
+ * Idempotent + cheap: it only touches entities with NO embeddings row, so on a
+ * fully-backfilled DB the candidate query returns zero and we no-op. Embeddings
+ * are computed in one batched forward pass (`prepareEmbeddingBatch`) and written
+ * inside a single transaction. A failure to embed a given row leaves it without
+ * a vector (it stays FTS-searchable) and the next boot retries it — same
+ * graceful-degradation contract as the rest of the embed layer. We cap the
+ * batch so a huge legacy store doesn't block boot; the remainder is picked up on
+ * subsequent boots.
+ *
+ * Returns the number of entities embedded in this pass.
+ */
+export async function backfillEntityEmbeddings(db: Database, maxBatch = 500): Promise<number> {
+  if (!vectorEnabled) return 0;
+  let pending: Array<{ id: string; name: string; summary: string | null; entity_type: string }>;
+  try {
+    pending = db
+      .prepare(
+        `SELECT e.id, e.name, e.summary, e.entity_type
+         FROM entities e
+         LEFT JOIN embeddings em ON em.content_id = e.id
+         WHERE em.content_id IS NULL
+         LIMIT ?`
+      )
+      .all(maxBatch) as Array<{ id: string; name: string; summary: string | null; entity_type: string }>;
+  } catch (err) {
+    logger.warn(`[vector] entity backfill scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    return 0;
+  }
+  if (pending.length === 0) return 0;
+
+  const vecs = await prepareEmbeddingBatch(
+    pending.map((e) => entityEmbedText(e.name, e.summary, e.entity_type))
+  );
+
+  let written = 0;
+  try {
+    const tx = db.transaction(() => {
+      for (let i = 0; i < pending.length; i++) {
+        const vec = vecs[i];
+        if (!vec) continue;
+        writeEmbeddingSync(db, pending[i]!.id, 'entity', vec);
+        written++;
+      }
+    });
+    tx();
+  } catch (err) {
+    logger.warn(`[vector] entity backfill write failed: ${err instanceof Error ? err.message : String(err)}`);
+    return 0;
+  }
+  if (written > 0) logger.info(`[vector] backfilled ${written} entity embedding(s)`);
+  return written;
 }
 
 /**

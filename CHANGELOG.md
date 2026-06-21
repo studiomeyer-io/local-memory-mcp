@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.3.0] — 2026-06-21
+
+Retrieval-quality + correctness release. 194 → **233 tests**. No breaking schema change — entity embeddings are added on write and idempotently backfilled on next open.
+
+### Added — project / tags scoping for `memory_search` and `memory_recall`
+
+Both main retrieval tools now accept optional `project` and `tags` filters (previously only `insights`/`reflect` did), so multi-project stores can scope retrieval. Applied as cheap source-table predicates; absent filters leave behavior unchanged. Because `project`/`tags` live on learnings + decisions, an active filter excludes entity/observation rows.
+
+### Added — recency / usage / importance ranking boost (hybrid mode)
+
+`memory_search` hybrid (RRF) results are now multiplied by a conservative, tunable boost (exp recency decay ~30d half-life + saturating usage + clamped importance, always ≥1, max +40%; disable via weights=0 or `MEMORY_RANK_*`). The `importance` column was previously written but never read for ranking. The boost cannot override a clear textual-relevance gap, and pure `fts`/`vector` single-mode ordering is untouched.
+
+### Fixed — vector search over entities returned nothing
+
+`memory_search({mode:"vector", types:["entity"]})` silently returned 0 results because entities were never embedded. Entities now embed `name + summary` atomically on create/observe (same single-transaction pattern as learnings), with a summary-change refresh and an idempotent boot-time backfill for legacy rows.
+
+### Performance — contradiction scanner per-entity cap
+
+`memory_contradictions` now bounds its O(N²) intra-entity self-join with `maxObservationsPerEntity` (default 200, range 2–2000), keeping the freshest live + embedded observations per entity, so a long-lived entity with thousands of observations no longer hits a quadratic cliff.
+
+### Internal
+
+- `memory_recall` description clarified as FTS5-only (use `memory_search` for hybrid).
+- Added `test:coverage` script + critical-path tests (RRF consensus, `asOf` window boundaries, supersede inverted-window, contradiction scope).
+
 ## [2.2.0] — 2026-06-20
 
 Portability + lifecycle release. 21 → **25 tools**, 159 → **194 tests**. No breaking schema change (one additive index, created via `IF NOT EXISTS` on the next open of any existing DB).
