@@ -54,6 +54,7 @@
     "dev": "tsx src/server.ts",
     "test": "MEMORY_EMBED_MOCK=1 vitest run",
     "test:watch": "MEMORY_EMBED_MOCK=1 vitest",
+    "test:coverage": "MEMORY_EMBED_MOCK=1 vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
@@ -67,6 +68,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "tsx": "^4.22.3",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
