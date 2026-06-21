@@ -12,7 +12,7 @@
  */
 import { z } from 'zod';
 import { getDb, newId, nowIso, escapeFtsQuery } from '../db/client.js';
-import { prepareEmbedding, writeEmbeddingSync, deleteEmbeddings } from '../db/vector.js';
+import { prepareEmbedding, writeEmbeddingSync, deleteEmbeddings, entityEmbedText } from '../db/vector.js';
 import type { ToolResult } from '../lib/types.js';
 
 // ─── entity_create ───────────────────────────────────
@@ -24,7 +24,21 @@ export const entityCreateSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
 });
 
-export function entityCreate(input: z.infer<typeof entityCreateSchema>): ToolResult {
+// v2.3.0: entities are now embedded (name + summary + type) so vector / hybrid
+// search over `types: ['entity']` actually returns them. The write is split so
+// the sync row-insert stays available for callers that can't await
+// (entityCreateInternal) while the public MCP path embeds atomically.
+//
+// `vec` is the precomputed entity embedding (or null when vec is off / the
+// caller chose not to embed). When supplied it is written in the SAME
+// transaction as the row INSERT — the F4 atomic pattern shared with
+// learn/decide/observe: row + vector commit together or roll back together.
+// On the "already exists + new summary" path we refresh the embedding too,
+// because the summary is part of the embedded surface.
+function entityCreateInternal(
+  input: z.infer<typeof entityCreateSchema>,
+  vec: Float32Array | null,
+): ToolResult {
   const db = getDb();
 
   // Upsert: if name+type already exists, return existing
@@ -34,11 +48,19 @@ export function entityCreate(input: z.infer<typeof entityCreateSchema>): ToolRes
 
   if (existing) {
     if (input.summary) {
-      db.prepare('UPDATE entities SET summary = ?, updated_at = ? WHERE id = ?').run(
-        input.summary,
-        nowIso(),
-        existing.id
-      );
+      const tx = db.transaction(() => {
+        db.prepare('UPDATE entities SET summary = ?, updated_at = ? WHERE id = ?').run(
+          input.summary,
+          nowIso(),
+          existing.id
+        );
+        // Summary changed → the embedded surface changed. Refresh atomically.
+        // vec is null when the caller didn't pre-embed (sync entityCreate) — in
+        // that case writeEmbeddingSync no-ops and the boot backfill / next
+        // observe refreshes it.
+        writeEmbeddingSync(db, existing.id, 'entity', vec);
+      });
+      tx();
     }
     return {
       success: true,
@@ -48,16 +70,56 @@ export function entityCreate(input: z.infer<typeof entityCreateSchema>): ToolRes
   }
 
   const id = newId();
-  db.prepare(
-    `INSERT INTO entities (id, name, entity_type, summary, confidence)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(id, input.name, input.entityType, input.summary ?? null, input.confidence ?? 0.7);
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO entities (id, name, entity_type, summary, confidence)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(id, input.name, input.entityType, input.summary ?? null, input.confidence ?? 0.7);
+    writeEmbeddingSync(db, id, 'entity', vec);
+  });
+  tx();
 
   return {
     success: true,
     data: { id, action: 'created' },
     message: `Entity "${input.name}" (${input.entityType}) angelegt.`,
   };
+}
+
+/**
+ * Synchronous entity create — writes the row (and FTS5 trigger) but does NOT
+ * embed, because embedding is async. The boot backfill + the observe path keep
+ * such rows reachable via vector search eventually. Kept for callers that need
+ * a synchronous result (and the existing test surface that calls it sync).
+ */
+export function entityCreate(input: z.infer<typeof entityCreateSchema>): ToolResult {
+  return entityCreateInternal(input, null);
+}
+
+/**
+ * Async entity create — the canonical MCP write path (used by the registry and
+ * by entityObserve's auto-create). Computes the entity embedding outside the
+ * transaction, then commits row + vector atomically. Falls back to the row-only
+ * write when vec is unavailable (extension off, embed failure). Same observable
+ * result shape as the sync entityCreate.
+ */
+export async function entityCreateEmbedded(input: z.infer<typeof entityCreateSchema>): Promise<ToolResult> {
+  const vec = await prepareEmbedding(entityEmbedText(input.name, input.summary ?? null, input.entityType));
+  return entityCreateInternal(input, vec);
+}
+
+/**
+ * Test-only seam: invoke the internal create-with-precomputed-vector path
+ * directly. Lets the atomicity test inject a deliberately-malformed vector to
+ * prove the row INSERT rolls back when the embedding write throws. Not part of
+ * the public tool surface — production callers use entityCreate /
+ * entityCreateEmbedded.
+ */
+export function entityCreateInternalForTest(
+  input: z.infer<typeof entityCreateSchema>,
+  vec: Float32Array | null,
+): ToolResult {
+  return entityCreateInternal(input, vec);
 }
 
 // ─── entity_observe ──────────────────────────────────
@@ -84,7 +146,10 @@ export async function entityObserve(input: z.infer<typeof entityObserveSchema>):
         code: 'MISSING_ENTITY_REF',
       };
     }
-    const created = entityCreate({
+    // Use the embedded create so an auto-created entity is vector-searchable
+    // too (entityObserve is already async). The observation gets its own
+    // embedding below; this embeds the entity name+type surface.
+    const created = await entityCreateEmbedded({
       name: input.entityName,
       entityType: input.entityType,
     });
