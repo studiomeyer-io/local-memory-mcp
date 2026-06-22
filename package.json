@@ -1,6 +1,6 @@
 {
   "name": "@studiomeyer/local-memory-mcp",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Persistent local memory for any MCP client. SQLite + FTS5 + sqlite-vec hybrid retrieval, bi-temporal asOf queries, contradiction detection, LLM-free reflection. Multilingual embeddings. Knowledge Graph. No cloud, no API keys.",
   "type": "module",
   "main": "dist/server.js",
@@ -72,5 +72,6 @@
     "tsx": "^4.22.3",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
-  }
+  },
+  "mcpName": "io.github.studiomeyer-io/local-memory-mcp"
 }
