@@ -50,11 +50,11 @@
     "url": "https://studiomeyer.io"
   },
   "scripts": {
-    "build": "tsc && cp src/db/schema.sql dist/db/schema.sql && mkdir -p dist/db/migrations && cp src/db/migrations/*.sql dist/db/migrations/ && chmod +x dist/server.js",
+    "build": "tsc && node scripts/copy-assets.mjs",
     "dev": "tsx src/server.ts",
-    "test": "MEMORY_EMBED_MOCK=1 vitest run",
-    "test:watch": "MEMORY_EMBED_MOCK=1 vitest",
-    "test:coverage": "MEMORY_EMBED_MOCK=1 vitest run --coverage",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
