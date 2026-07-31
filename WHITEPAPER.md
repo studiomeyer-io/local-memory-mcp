@@ -59,7 +59,7 @@ Developers and privacy-conscious users who want structured, searchable, long-ter
 
 **Sessions.** Each conversation can be started and ended; `memory_session_start` loads context from the last few sessions so the assistant resumes where you left off.
 
-**Learnings.** Typed knowledge entries (`pattern`, `mistake`, `insight`, `research`, `architecture`, `infrastructure`, `tool`, `workflow`, `performance`, `security`) with confidence, tags, and an episodic/semantic type that is auto-classified. A gatekeeper prevents duplicates: exact matches bump a usage counter; a much longer, very similar entry updates the existing one rather than forking it.
+**Learnings.** Typed knowledge entries (`pattern`, `mistake`, `insight`, `research`, `architecture`, `infrastructure`, `tool`, `workflow`, `performance`, `security`) with confidence, tags, and an episodic/semantic type that is auto-classified. A gatekeeper prevents duplicates: an exact match bumps a usage counter instead of storing the content twice. Enriching an existing entry is explicit, via `memory_learn_update` against its id, so a write never silently rewrites a row the caller did not name.
 
 **Decisions.** Strategic choices with reasoning and alternatives, so months later you can reconstruct *why* you chose something — not just what.
 

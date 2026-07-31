@@ -74,49 +74,25 @@ export async function learn(input: z.infer<typeof learnSchema>): Promise<ToolRes
     };
   }
 
-  // Soft gatekeeper: FTS5 similarity check
-  try {
-    const fts = escapeFtsQuery(input.content.slice(0, 200));
-    const similar = db
-      .prepare(
-        `SELECT l.id, l.content, l.usage_count,
-                bm25(search_fts) AS score
-         FROM search_fts
-         JOIN learnings l ON l.id = search_fts.content_id
-         WHERE search_fts MATCH ? AND search_fts.content_type = 'learning'
-         AND l.archived = 0
-         ORDER BY score
-         LIMIT 1`
-      )
-      .get(fts) as { id: string; content: string; usage_count: number; score: number } | undefined;
-
-    // If the top match is very short and the new input is long, OR vice versa,
-    // treat as UPDATE (new, richer version of the same learning).
-    if (similar && similar.score < -5) {
-      const lenDiff = Math.abs(similar.content.length - input.content.length);
-      if (lenDiff > 50 && input.content.length > similar.content.length) {
-        // Atomic update: compute the new embedding outside the transaction,
-        // then UPDATE the row + write the embedding in one sync transaction.
-        const vec = await prepareEmbedding(input.content);
-        const tx = db.transaction(() => {
-          db.prepare(
-            'UPDATE learnings SET content = ?, usage_count = usage_count + 1, last_used = ?, confidence = ? WHERE id = ?'
-          ).run(input.content, nowIso(), input.confidence ?? 0.7, similar.id);
-          writeEmbeddingSync(db, similar.id, 'learning', vec);
-        });
-        tx();
-        return {
-          success: true,
-          data: { id: similar.id, action: 'updated_similar', usageCount: similar.usage_count + 1 },
-          message: 'Ähnliches Learning erweitert.',
-        };
-      }
-    }
-  } catch (err) {
-    // FTS5 query parsing failed — not fatal, just skip the similarity check.
-    // Log for debugging but continue with insert.
-    process.stderr.write(`[local-memory] FTS5 similarity check failed: ${err instanceof Error ? err.message : String(err)}\n`);
-  }
+  // A "soft gatekeeper" used to sit here: an FTS5 MATCH on the first 200
+  // characters, whose single best bm25() hit was overwritten when the new
+  // entry was more than 50 characters longer. It was removed because it
+  // destroyed unrelated learnings.
+  //
+  // The query was built with escapeFtsQuery, which ORs every token so that a
+  // search returns rows matching ANY of them. That is right for recall and
+  // wrong as the gate on a destructive write: ordinary words match almost
+  // every stored row. bm25() then ranks that near-universal candidate set, and
+  // because it is an unbounded, length-scaled relevance value rather than a
+  // normalised similarity, the fixed -5 threshold means different things at
+  // different corpus sizes. What remained of the decision was "the new entry
+  // is longer".
+  //
+  // A near-duplicate row is a small problem. Silently replacing an unrelated
+  // one is not, especially as the UPDATE rewrote only `content` and left
+  // category, tags and source describing text that no longer existed.
+  //
+  // Exact-duplicate detection above is unaffected and still bumps usage_count.
 
   // Atomic insert: compute embedding outside any transaction, then INSERT row
   // + INSERT embedding in one sync transaction. Either both commit or both

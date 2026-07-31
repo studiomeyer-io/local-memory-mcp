@@ -204,7 +204,7 @@ memory_learn_archive({ learningId: "...", reason: "wrong" })
 memory_learn_update({ learningId: "...", content: "…", confidence: 0.9 })
 ```
 
-`archive` is a soft delete: the row stays in `learnings` (with `archived = 1`, `archived_at`, and `lifecycle_state = 'archived' | 'archived:<reason>'`), the embedding stays in vec0 (so asOf-style cross-references can still resolve), but `recall` / `search` / the gatekeeper's similarity check all filter it out. Idempotent.
+`archive` is a soft delete: the row stays in `learnings` (with `archived = 1`, `archived_at`, and `lifecycle_state = 'archived' | 'archived:<reason>'`), the embedding stays in vec0 (so asOf-style cross-references can still resolve), but `recall` / `search` / the duplicate check all filter it out. Idempotent.
 
 `update` edits a live (non-archived) learning. If `content` changes we re-embed in the F4 atomic pattern (compute outside the transaction, write inside one sync `db.transaction()`). If the embedding write fails or vec is disabled, the now-stale old embedding is purged so cosine search can't surface a vector that no longer represents the live text. Bumps `usage_count` and sets `last_used` so an edit counts as a touch.
 
@@ -237,7 +237,7 @@ The Markdown is for the LLM to read at session start; the structured fields are 
 
 ### Learnings
 
-**`memory_learn`** -- The core tool. Stores a piece of knowledge with a category and content. Categories: `pattern` (recurring success), `mistake` (what went wrong), `insight` (strategic realization), `research` (external knowledge), `architecture`, `infrastructure`, `tool`, `workflow`, `performance`, `security`. The duplicate gatekeeper checks if something similar already exists. If it finds a match, it bumps the usage counter instead of creating a duplicate. Optional: `tags`, `confidence` (0-1), `project`, `memoryType` (episodic or semantic, auto-classified if omitted).
+**`memory_learn`** -- The core tool. Stores a piece of knowledge with a category and content. Categories: `pattern` (recurring success), `mistake` (what went wrong), `insight` (strategic realization), `research` (external knowledge), `architecture`, `infrastructure`, `tool`, `workflow`, `performance`, `security`. The duplicate gatekeeper checks whether the identical content is already stored. If so, it bumps the usage counter instead of creating a duplicate. To extend an existing entry rather than add a new one, use `memory_learn_update` with its id. Optional: `tags`, `confidence` (0-1), `project`, `memoryType` (episodic or semantic, auto-classified if omitted).
 
 **`memory_recall`** -- Quick search on learnings only. Pass a `query` string for keyword search, or omit it to get the most recent learnings. Good for "what did I learn about X" questions. Use `limit` to control how many results come back (default 10).
 
