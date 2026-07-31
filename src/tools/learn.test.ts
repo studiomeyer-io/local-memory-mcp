@@ -155,6 +155,147 @@ describe('learn gatekeeper', () => {
       }
     }
   });
+
+  it('never destroys an existing learning when storing a new one', async () => {
+    // Silent data loss: storing an unrelated learning REPLACES an existing
+    // one and reports action "updated_similar", which reads like success.
+    //
+    // Cause: the soft gatekeeper matches escapeFtsQuery(content.slice(0, 200))
+    // against `search_fts`. That helper ORs every token by design (docstring
+    // in src/db/client.ts), so ordinary words match almost any row; bm25() is
+    // an unbounded length-scaled score, not a normalised similarity; so the
+    // overwrite decision reduces to "the new entry is longer".
+    //
+    // The filler is not padding — bm25 is corpus-relative. With one stored
+    // document every matched token has IDF near zero: score -0.000008, so
+    // `score < -5` is unreachable. Measured here: 1 doc -0.000008, 6 docs
+    // -4.80, 11 docs -8.16. A suite storing two rows per case never sees it.
+    //
+    // The assertion names no victim. Which row bm25 ranks first is incidental;
+    // the contract is that storing one learning never removes or rewrites
+    // another. Every insert is therefore part of the act, leaving nothing for
+    // the defect to corrupt before the assertions run.
+    //
+    // By hand: restore the soft gatekeeper block in src/tools/learn.ts and
+    // re-run — two entries vanish, and the row holding the last document
+    // reports category "pattern" with empty tags.
+    const { learn } = await import('./learn.js');
+    const { getDb, escapeFtsQuery } = await import('../db/client.js');
+
+    const filler = [
+      'The build pipeline caches compiled artifacts between runs to avoid repeating work.',
+      'Feature flags are evaluated once per request and memoised for the duration.',
+      'Database migrations run forward only; rollbacks use a compensating migration.',
+      'The retry policy uses exponential backoff with jitter capped at thirty seconds.',
+      'Structured logs are emitted as newline delimited JSON for ingestion downstream.',
+      'Session cookies are marked secure, httponly, and samesite lax by default.',
+      'Static assets are fingerprinted so they can be cached indefinitely at the edge.',
+      'Background jobs are idempotent because the queue guarantees at least once delivery.',
+      'Connection pools are sized to the number of worker threads, not to peak traffic.',
+      'Timestamps are stored in UTC and converted only at the presentation layer.',
+      'The linter runs as a pre-commit hook and again in continuous integration.',
+      'Secrets are injected as environment variables and never written to disk.',
+      'Pagination uses an opaque cursor rather than an offset to stay stable under writes.',
+      'Health checks distinguish liveness from readiness so restarts are not triggered early.',
+      'Metrics are sampled at one percent for traces and one hundred percent for counters.',
+    ];
+    // Two longer notes on unrelated subjects, sharing no distinctive
+    // vocabulary. The last is more than 50 characters longer than the one
+    // before it, the shape the length heuristic reacts to.
+    const documents = [
+      ...filler.map((content) => ({ category: 'pattern' as const, tags: ['ops'], content })),
+      {
+        category: 'infrastructure' as const,
+        tags: ['packaging'],
+        content:
+          'A package manager that defers install scripts will print a warning and skip every install and postinstall hook until an operator approves them explicitly. Libraries that ship prebuilt platform binaries inside their published archive keep working regardless.',
+      },
+      {
+        category: 'architecture' as const,
+        tags: ['parsing'],
+        content:
+          'A template compiler stamps the name of the producing rule onto every node that rule returns. When a rule hands back a flat array of nodes it did not produce, those borrowed nodes lose their own provenance and any consumer mapping positions back to rules is misled. Returning a single wrapper that spans the whole region preserves the inner names, and wrapper instances must never be reused across nested regions because each reuse overwrites the match state of its parent.',
+      },
+    ];
+
+    // Record what each call REPORTED, not just what it did. The silence is
+    // half the defect: every one of these returns success.
+    const reportedAsMerged: string[] = [];
+    const store = async (doc: (typeof documents)[number]) => {
+      const result = await learn(doc);
+      expect(result.success, `learn() failed outright for: ${doc.content.slice(0, 40)}...`).toBe(true);
+      if (result.success && (result.data as { action: string }).action === 'updated_similar') {
+        reportedAsMerged.push(`"${doc.content.slice(0, 40)}..." returned success with action "updated_similar"`);
+      }
+    };
+
+    // All but the last, so the guard below inspects the corpus the final call
+    // will actually see.
+    for (const doc of documents.slice(0, -1)) {
+      await store(doc);
+    }
+
+    const db = getDb();
+    const last = documents[documents.length - 1]!;
+
+    // Precondition guard. Edit the corpus above and the score can drift back
+    // over the threshold, at which point the defect stops reproducing and this
+    // test would go green while the bug is still present. Fail loudly instead.
+    const candidate = db
+      .prepare(
+        `SELECT bm25(search_fts) AS score
+         FROM search_fts
+         JOIN learnings l ON l.id = search_fts.content_id
+         WHERE search_fts MATCH ? AND search_fts.content_type = 'learning'
+         AND l.archived = 0
+         ORDER BY score
+         LIMIT 1`
+      )
+      .get(escapeFtsQuery(last.content.slice(0, 200))) as { score: number } | undefined;
+    expect(
+      candidate?.score,
+      'corpus no longer reaches the gatekeeper threshold, so this test can no longer detect the defect'
+    ).toBeLessThan(-5);
+
+    await store(last);
+
+    const rows = db
+      .prepare('SELECT content, category, tags_json FROM learnings WHERE archived = 0')
+      .all() as Array<{ content: string; category: string; tags_json: string }>;
+
+    // Entries that are simply gone.
+    const destroyed = documents
+      .filter((d) => !rows.some((r) => r.content === d.content))
+      .map((d) => `"${d.content.slice(0, 40)}..." is gone`);
+
+    // Rows that survived carrying someone else's metadata. The UPDATE rewrites
+    // only `content`, so a row that absorbed another entry keeps the destroyed
+    // one's category and tags, which is what hides the corruption from
+    // tag-scoped search.
+    const wrongMetadata = documents
+      .map((doc) => {
+        const row = rows.find((r) => r.content === doc.content);
+        if (!row) return null; // already counted as destroyed
+        const tags = JSON.parse(row.tags_json) as string[];
+        const sameTags =
+          tags.length === doc.tags.length && tags.every((tag, i) => tag === doc.tags[i]);
+        if (row.category === doc.category && sameTags) return null;
+        return `"${doc.content.slice(0, 40)}..." was written as ${doc.category}/${JSON.stringify(doc.tags)} but its row reads ${row.category}/${row.tags_json}`;
+      })
+      .filter((entry): entry is string => entry !== null);
+
+    // One assertion carrying the whole defect, so a red run shows all three
+    // faces of it at once: the destruction, the success reported while
+    // destroying, and the metadata left describing content that no longer
+    // exists. Asserting these separately would hide the later ones, because
+    // the first failure ends the test.
+    expect({ destroyed, reportedAsMerged, wrongMetadata }).toEqual({
+      destroyed: [],
+      reportedAsMerged: [],
+      wrongMetadata: [],
+    });
+    expect(rows).toHaveLength(documents.length);
+  });
 });
 
 // ─── P3.3 v2.1.0 — learn_archive ──────────────────────
