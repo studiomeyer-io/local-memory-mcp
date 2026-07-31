@@ -22,12 +22,16 @@
  */
 import type { Database } from 'better-sqlite3';
 import { readFileSync, existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../lib/logger.js';
 import { embed, embedBatch, EMBEDDING_DIM, embedModelId } from '../lib/embed.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ESM has no `require`; the sqlite-vec loader below needs it.
+const require = createRequire(import.meta.url);
 
 let vectorEnabled = false;
 let lastError: string | null = null;
