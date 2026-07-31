@@ -65,7 +65,7 @@ function entityCreateInternal(
     return {
       success: true,
       data: { id: existing.id, action: 'existing' },
-      message: `Entity "${input.name}" existiert bereits.`,
+      message: `Entity "${input.name}" already exists.`,
     };
   }
 
@@ -82,7 +82,7 @@ function entityCreateInternal(
   return {
     success: true,
     data: { id, action: 'created' },
-    message: `Entity "${input.name}" (${input.entityType}) angelegt.`,
+    message: `Entity "${input.name}" (${input.entityType}) created.`,
   };
 }
 
@@ -176,7 +176,7 @@ export async function entityObserve(input: z.infer<typeof entityObserveSchema>):
   return {
     success: true,
     data: { observationId: id, entityId },
-    message: 'Beobachtung gespeichert.',
+    message: 'Observation saved.',
   };
 }
 
@@ -395,11 +395,11 @@ export function entityRelate(input: z.infer<typeof entityRelateSchema>): ToolRes
       `INSERT INTO entity_relations (id, from_entity_id, to_entity_id, relation_type, weight)
        VALUES (?, ?, ?, ?, ?)`
     ).run(id, input.fromEntityId, input.toEntityId, input.relationType, input.weight ?? 1.0);
-    return { success: true, data: { id }, message: 'Beziehung angelegt.' };
+    return { success: true, data: { id }, message: 'Relation created.' };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('UNIQUE')) {
-      return { success: false, error: 'Diese Beziehung existiert bereits.', code: 'DUPLICATE_RELATION' };
+      return { success: false, error: 'This relation already exists.', code: 'DUPLICATE_RELATION' };
     }
     return { success: false, error: msg, code: 'INSERT_FAILED' };
   }
@@ -437,7 +437,7 @@ export function entityDelete(input: z.infer<typeof entityDeleteSchema>): ToolRes
   });
   tx();
 
-  return { success: true, data: { id: input.id }, message: 'Entity und zugehörige Daten gelöscht.' };
+  return { success: true, data: { id: input.id }, message: 'Entity and its associated data deleted.' };
 }
 
 // ─── observation_supersede (v2.2.0) ──────────────────
@@ -489,7 +489,7 @@ export function observationSupersede(input: z.infer<typeof observationSupersedeS
     return {
       success: true,
       data: { observationId: older.id, entityId: older.entity_id, action: 'already_superseded', validTo: older.valid_to },
-      message: 'Beobachtung war bereits abgelöst.',
+      message: 'Observation was already superseded.',
     };
   }
 
@@ -542,6 +542,6 @@ export function observationSupersede(input: z.infer<typeof observationSupersedeS
         ? { note: 'validTo is at or before the observation valid_from — it will not be live at any point in time.' }
         : {}),
     },
-    message: 'Beobachtung abgelöst (Tombstone gesetzt, bleibt für asOf-Abfragen erhalten).',
+    message: 'Observation superseded (tombstone set; still reachable via asOf queries).',
   };
 }

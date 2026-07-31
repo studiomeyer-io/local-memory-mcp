@@ -217,7 +217,7 @@ export function memoryExport(input: z.infer<typeof memoryExportSchema>): ToolRes
   return {
     success: true,
     data: envelope,
-    message: `Export: ${total} Datensätze (${learnings.length} learnings, ${decisions.length} decisions, ${entities.length} entities, ${observations.length} observations, ${relations.length} relations${includeSessions ? `, ${sessions.length} sessions` : ''}). Embeddings werden beim Import neu berechnet. Dieses Envelope ist auch von memory.studiomeyer.io importierbar.`,
+    message: `Export: ${total} records (${learnings.length} learnings, ${decisions.length} decisions, ${entities.length} entities, ${observations.length} observations, ${relations.length} relations${includeSessions ? `, ${sessions.length} sessions` : ''}). Embeddings are recomputed on import. This envelope also imports into memory.studiomeyer.io.`,
   };
 }
 
@@ -507,7 +507,7 @@ export async function memoryImport(input: z.infer<typeof memoryImportSchema>): P
   return {
     success: true,
     data: { imported: counts, skipped, mode: 'merge' },
-    message: `Import: ${totalImported} neue Datensätze übernommen (additiv, Duplikate übersprungen).${totalSkipped > 0 ? ` ${totalSkipped} übersprungen (fehlende Referenzen/fehlerhaft).` : ''}`,
+    message: `Import: ${totalImported} new records added (additive, duplicates skipped).${totalSkipped > 0 ? ` ${totalSkipped} skipped (missing references or malformed).` : ''}`,
   };
 }
 

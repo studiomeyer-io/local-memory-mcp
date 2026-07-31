@@ -75,7 +75,7 @@ export async function learn(input: z.infer<typeof learnSchema>): Promise<ToolRes
     return {
       success: true,
       data: { id: exact.id, action: 'skipped_duplicate', usageCount: exact.usage_count + 1 },
-      message: 'Duplikat erkannt — Usage-Counter erhöht.',
+      message: 'Duplicate detected; usage counter incremented.',
     };
   }
 
@@ -129,7 +129,7 @@ export async function learn(input: z.infer<typeof learnSchema>): Promise<ToolRes
   return {
     success: true,
     data: { id, action: 'added', memoryType },
-    message: 'Learning gespeichert.',
+    message: 'Learning saved.',
   };
 }
 
@@ -174,7 +174,7 @@ export function learnArchive(input: z.infer<typeof learnArchiveSchema>): ToolRes
     return {
       success: true,
       data: { id: input.learningId, action: 'already_archived' },
-      message: 'Learning war bereits archiviert.',
+      message: 'Learning was already archived.',
     };
   }
 
@@ -196,8 +196,8 @@ export function learnArchive(input: z.infer<typeof learnArchiveSchema>): ToolRes
     success: true,
     data: { id: input.learningId, action: 'archived', lifecycleState: lifecycle },
     message: input.reason
-      ? `Learning archiviert: ${input.reason}.`
-      : 'Learning archiviert.',
+      ? `Learning archived: ${input.reason}.`
+      : 'Learning archived.',
   };
 }
 
@@ -304,7 +304,7 @@ export async function learnUpdate(input: z.infer<typeof learnUpdateSchema>): Pro
       reembedded: willChangeContent && vec !== null,
       contentChanged: willChangeContent,
     },
-    message: 'Learning aktualisiert.',
+    message: 'Learning updated.',
   };
 }
 
@@ -433,7 +433,7 @@ export async function learnBulk(input: z.infer<typeof learnBulkSchema>): Promise
   return {
     success: true,
     data: { total: input.items.length, added, skipped, results },
-    message: `${added} Learnings hinzugefügt, ${skipped} Duplikate übersprungen.`,
+    message: `${added} learnings added, ${skipped} duplicates skipped.`,
   };
 }
 

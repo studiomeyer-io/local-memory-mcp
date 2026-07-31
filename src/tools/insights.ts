@@ -60,7 +60,7 @@ export function insights(input: z.infer<typeof insightsSchema>): ToolResult {
       categoryBreakdown,
       entityTypeBreakdown,
     },
-    message: `Claude kennt dich seit ${daysOfMemory} Tagen. Er erinnert sich an ${totalLearnings} Dinge.`,
+    message: `Claude has known you for ${daysOfMemory} days and remembers ${totalLearnings} things.`,
   };
 }
 
@@ -108,7 +108,7 @@ export function health(): ToolResult {
       },
     },
     message: integrity === 'ok'
-      ? `Alles gesund. Hybrid: ${vec.enabled && embedMode() !== 'disabled' ? 'on' : 'off (FTS5-only)'}.`
+      ? `All healthy. Hybrid: ${vec.enabled && embedMode() !== 'disabled' ? 'on' : 'off (FTS5-only)'}.`
       : `Integrity issue: ${integrity}`,
   };
 }
@@ -148,7 +148,7 @@ export function profile(input: z.infer<typeof profileSchema>): ToolResult {
     `profile_${input.field}`,
     input.value
   );
-  return { success: true, data: { field: input.field, value: input.value }, message: 'Profil aktualisiert.' };
+  return { success: true, data: { field: input.field, value: input.value }, message: 'Profile updated.' };
 }
 
 // ─── goal ────────────────────────────────────────────
@@ -168,10 +168,10 @@ export function goal(input: z.infer<typeof goalSchema>): ToolResult {
   if (input.action === 'set') {
     if (!input.goal) return { success: false, error: 'goal required for set.', code: 'MISSING_ARGS' };
     db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('current_goal', input.goal);
-    return { success: true, data: { goal: input.goal }, message: 'Ziel gesetzt.' };
+    return { success: true, data: { goal: input.goal }, message: 'Goal set.' };
   }
   db.prepare("DELETE FROM meta WHERE key = 'current_goal'").run();
-  return { success: true, data: { goal: null }, message: 'Ziel gelöscht.' };
+  return { success: true, data: { goal: null }, message: 'Goal cleared.' };
 }
 
 // ─── guide ───────────────────────────────────────────

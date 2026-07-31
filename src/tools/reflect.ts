@@ -274,7 +274,7 @@ export function reflect(input: z.infer<typeof reflectSchema>): ToolResult {
       openDecisions,
       summary,
     },
-    message: `Reflection für die letzten ${lookback} Tage.`,
+    message: `Reflection over the last ${lookback} days.`,
   };
 }
 

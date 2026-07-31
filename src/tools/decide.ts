@@ -76,6 +76,6 @@ export async function decide(input: z.infer<typeof decideSchema>): Promise<ToolR
   return {
     success: true,
     data: { id },
-    message: `Entscheidung "${input.title}" gespeichert.`,
+    message: `Decision "${input.title}" saved.`,
   };
 }

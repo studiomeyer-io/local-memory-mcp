@@ -63,7 +63,7 @@ export function sessionStart(input: z.infer<typeof sessionStartSchema>): ToolRes
       previousSessions: prevSessions,
       recentLearnings,
     },
-    message: `Session #${totalSessions} gestartet.${input.project ? ` Projekt: ${input.project}` : ''}`,
+    message: `Session #${totalSessions} started.${input.project ? ` Project: ${input.project}` : ''}`,
   };
 }
 
@@ -100,6 +100,6 @@ export function sessionEnd(input: z.infer<typeof sessionEndSchema>): ToolResult 
   return {
     success: true,
     data: { sessionId: targetId },
-    message: 'Session beendet.',
+    message: 'Session ended.',
   };
 }
