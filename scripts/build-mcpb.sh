@@ -69,7 +69,16 @@ mkdir -p mcpb-build-deps
 cp -r mcpb-build-deps/node_modules mcpb-build/
 rm -rf mcpb-build-deps
 
-echo "[mcpb-build] (4/5) Validate manifest"
+echo "[mcpb-build] (4/5) Sync manifest version from package.json + validate"
+# The checked-in manifest carried 2.2.0 through two releases while the bundle
+# FILENAME said 2.4.0 — the bundle self-identified as an older version after
+# install. package.json is the single version source; sync before packing.
+node -e "
+  const fs = require('fs');
+  const m = JSON.parse(fs.readFileSync('mcpb-build/manifest.json', 'utf-8'));
+  m.version = require('./package.json').version;
+  fs.writeFileSync('mcpb-build/manifest.json', JSON.stringify(m, null, 2) + '\n');
+"
 npx -y @anthropic-ai/mcpb@latest validate mcpb-build/manifest.json
 
 echo "[mcpb-build] (5/5) Pack -> ${BUNDLE_NAME}"

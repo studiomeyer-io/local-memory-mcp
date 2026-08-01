@@ -109,12 +109,12 @@ describe('learn gatekeeper', () => {
     }
   });
 
-  it('Analyst R2 #5: updated_similar branch re-embeds atomically (UPDATE branch regression)', async () => {
-    // The gatekeeper's UPDATE branch (when an FTS5-similar but shorter
-    // learning exists) was the second code path that calls the F4 atomic
-    // pattern. R1 added regression for the fresh-INSERT path; this test
-    // closes the gap on the UPDATE path so a future change to learn.ts
-    // can't quietly leave its atomicity unguarded.
+  it('a longer FTS5-similar learning is ADDED, never merged into the shorter one', async () => {
+    // This test used to cover the fuzzy "updated_similar" UPDATE branch and
+    // accepted either outcome, which made it vacuous once v2.4.0 removed that
+    // branch (#21: it destroyed unrelated learnings). It now pins the NEW
+    // contract: similar-but-not-identical content is always a fresh row, the
+    // shorter original survives untouched, and both rows get embeddings.
     const { learn } = await import('./learn.js');
     const { getDb } = await import('../db/client.js');
     const { isVectorEnabled } = await import('../db/vector.js');
@@ -127,7 +127,8 @@ describe('learn gatekeeper', () => {
     expect(first.success).toBe(true);
     const firstId = first.success ? (first.data as { id: string }).id : '';
 
-    // Add the long version which should trigger updated_similar
+    // The long, FTS5-overlapping version — exactly the shape that used to
+    // trigger the destructive merge (longer + shared tokens).
     const longer = await learn({
       category: 'pattern',
       content:
@@ -136,22 +137,18 @@ describe('learn gatekeeper', () => {
     expect(longer.success).toBe(true);
     if (longer.success) {
       const d = longer.data as { id: string; action: string };
-      // Either updated_similar (gatekeeper triggered) or a fresh add — both
-      // are valid depending on how aggressive FTS5 was on the short prefix.
-      // What matters: if the same id is reused, its embedding must be
-      // upserted; if a new id was added, both ids must have an embedding.
+      expect(d.action).toBe('added');
+      expect(d.id).not.toBe(firstId);
+
       const db = getDb();
+      const original = db
+        .prepare('SELECT content FROM learnings WHERE id = ?')
+        .get(firstId) as { content: string } | undefined;
+      expect(original?.content).toBe('sqlite vec hybrid');
+
       if (isVectorEnabled()) {
-        if (d.action === 'updated_similar') {
-          expect(d.id).toBe(firstId);
-          const e = db
-            .prepare('SELECT content_id FROM embeddings WHERE content_id = ?')
-            .get(d.id) as { content_id: string } | undefined;
-          expect(e).toBeDefined();
-        } else {
-          const eCount = (db.prepare('SELECT COUNT(*) AS c FROM embeddings').get() as { c: number }).c;
-          expect(eCount).toBeGreaterThanOrEqual(2);
-        }
+        const eCount = (db.prepare('SELECT COUNT(*) AS c FROM embeddings').get() as { c: number }).c;
+        expect(eCount).toBeGreaterThanOrEqual(2);
       }
     }
   });

@@ -2,9 +2,14 @@
  * Learning storage with a light-weight gatekeeper.
  *
  * Gatekeeper logic (no LLM, pure SQL):
- *   1. Check for exact duplicate content → SKIP (return existing).
- *   2. Check for very similar content via FTS5 + length heuristic → UPDATE existing.
- *   3. Otherwise → INSERT new.
+ *   1. Check for exact duplicate content → SKIP (return existing, bump usage).
+ *   2. Otherwise → INSERT new.
+ *
+ * There deliberately is NO fuzzy "similar content → UPDATE" step. v2.4.0
+ * removed it (#21): the FTS5 query OR-ed every token, bm25() is an unbounded
+ * relevance score rather than a similarity, and the branch silently
+ * overwrote unrelated learnings. Enriching an existing entry is explicit,
+ * via memory_learn_update against a known id.
  *
  * v2.0.0+: after a successful INSERT or UPDATE we hand the content to the
  * local embedding pipeline and upsert the resulting 384-dim vector into the

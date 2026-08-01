@@ -16,6 +16,9 @@
 // Very first: announce we're alive on stderr, BEFORE any other import.
 process.stderr.write('[local-memory] boot: node ' + process.version + '\n');
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -24,7 +27,13 @@ import { closeDb, getDb } from './db/client.js';
 import { getHandler, toMcpToolList, TOOLS } from './tools/registry.js';
 
 const SERVER_NAME = 'local-memory-mcp';
-const SERVER_VERSION = '2.3.0';
+// Read from package.json instead of a hardcoded literal — the literal sat at
+// 2.3.0 through the 2.4.0 release, so the MCP handshake advertised a stale
+// version to every client. package.json ships in the npm tarball one level
+// above dist/, and the same relative path holds when running from src/.
+const SERVER_VERSION: string = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf-8'),
+).version;
 
 const INSTRUCTIONS = `Local Memory — Persistent memory for your AI assistant.
 
