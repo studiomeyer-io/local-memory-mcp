@@ -113,22 +113,51 @@ describe('learn gatekeeper', () => {
     // This test used to cover the fuzzy "updated_similar" UPDATE branch and
     // accepted either outcome, which made it vacuous once v2.4.0 removed that
     // branch (#21: it destroyed unrelated learnings). It now pins the NEW
-    // contract: similar-but-not-identical content is always a fresh row, the
-    // shorter original survives untouched, and both rows get embeddings.
+    // contract on a corpus the OLD branch would actually have fired on:
+    // bm25() is corpus-relative (1 doc ≈ -0.000008, 11 docs ≈ -8.16 — see the
+    // measurement table in the regression test below), so without the filler
+    // rows a reintroduced fuzzy branch would never trip its -5 threshold and
+    // this test would pass vacuously against the very bug it pins.
     const { learn } = await import('./learn.js');
     const { getDb } = await import('../db/client.js');
     const { isVectorEnabled } = await import('../db/vector.js');
 
+    // Grow the corpus past the bm25 threshold zone before the interesting pair.
+    const filler = [
+      'The build pipeline caches compiled artifacts between runs to avoid repeating work.',
+      'Feature flags are evaluated once per request and memoised for the duration.',
+      'Database migrations run forward only; rollbacks use a compensating migration.',
+      'The retry policy uses exponential backoff with jitter capped at thirty seconds.',
+      'Structured logs are emitted as newline delimited JSON for ingestion downstream.',
+      'Session cookies are marked secure, httponly, and samesite lax by default.',
+      'Static assets are fingerprinted so they can be cached indefinitely at the edge.',
+      'Background jobs are idempotent because the queue guarantees at least once delivery.',
+      'Connection pools are sized to the number of worker threads, not to peak traffic.',
+      'Timestamps are stored in UTC and converted only at the presentation layer.',
+      'Pagination uses an opaque cursor rather than an offset to stay stable under writes.',
+      'Health checks distinguish liveness from readiness so restarts are not triggered early.',
+    ];
+    for (const content of filler) {
+      const r = await learn({ category: 'workflow', tags: ['ops'], content });
+      expect(r.success).toBe(true);
+    }
+
     // Seed a short version
     const first = await learn({
       category: 'pattern',
+      tags: ['search'],
       content: 'sqlite vec hybrid',
     });
     expect(first.success).toBe(true);
     const firstId = first.success ? (first.data as { id: string }).id : '';
 
+    const db = getDb();
+    const originalBefore = db
+      .prepare('SELECT content, category, tags_json, source, confidence FROM learnings WHERE id = ?')
+      .get(firstId) as Record<string, unknown>;
+
     // The long, FTS5-overlapping version — exactly the shape that used to
-    // trigger the destructive merge (longer + shared tokens).
+    // trigger the destructive merge (longer + shared tokens + rich corpus).
     const longer = await learn({
       category: 'pattern',
       content:
@@ -140,15 +169,15 @@ describe('learn gatekeeper', () => {
       expect(d.action).toBe('added');
       expect(d.id).not.toBe(firstId);
 
-      const db = getDb();
-      const original = db
-        .prepare('SELECT content FROM learnings WHERE id = ?')
-        .get(firstId) as { content: string } | undefined;
-      expect(original?.content).toBe('sqlite vec hybrid');
+      // The full original row survives — not just its content.
+      const originalAfter = db
+        .prepare('SELECT content, category, tags_json, source, confidence FROM learnings WHERE id = ?')
+        .get(firstId) as Record<string, unknown>;
+      expect(originalAfter).toEqual(originalBefore);
 
       if (isVectorEnabled()) {
         const eCount = (db.prepare('SELECT COUNT(*) AS c FROM embeddings').get() as { c: number }).c;
-        expect(eCount).toBeGreaterThanOrEqual(2);
+        expect(eCount).toBeGreaterThanOrEqual(filler.length + 2);
       }
     }
   });

@@ -34,9 +34,24 @@ describe('release version consistency', () => {
     expect(read('mcpb-build/manifest.json').version).toBe(pkgVersion);
   });
 
+  it('package-lock.json matches package.json (both carriers)', () => {
+    const lock = read('package-lock.json');
+    expect(lock.version).toBe(pkgVersion);
+    expect(lock.packages['']?.version).toBe(pkgVersion);
+  });
+
   it('server.ts advertises the package.json version (no hardcoded literal)', () => {
     const src = readFileSync(join(root, 'src/server.ts'), 'utf-8');
-    expect(src).not.toMatch(/SERVER_VERSION\s*=\s*'[0-9]/);
-    expect(src).toContain("readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json')");
+    // Either quote style — a double-quoted hardcode must fail this too.
+    expect(src).not.toMatch(/SERVER_VERSION\s*=\s*["'][0-9]/);
+    expect(src).toContain("join(here, '../package.json')");
+  });
+
+  it('the mcpb bundle ships package.json so the version probe resolves', () => {
+    // server.js reads '../package.json' relative to itself; in the bundle
+    // that is the bundle root, which build-mcpb.sh must populate. A 2.4.1
+    // iteration missed this and the bundle crashed at import time.
+    const script = readFileSync(join(root, 'scripts/build-mcpb.sh'), 'utf-8');
+    expect(script).toContain('cp package.json mcpb-build/');
   });
 });

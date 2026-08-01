@@ -36,6 +36,11 @@ echo "[mcpb-build] (2/5) Prepare bundle dir mcpb-build/"
 rm -rf mcpb-build/server mcpb-build/node_modules
 mkdir -p mcpb-build/server
 cp -r dist/* mcpb-build/server/
+# server.js resolves its advertised version from '../package.json' relative to
+# itself (= the bundle root). Without this copy the first probe misses and the
+# server would fall back to 0.0.0 — and a pre-fallback iteration of that read
+# crashed the bundle at import time. Ship the real file.
+cp package.json mcpb-build/
 
 echo "[mcpb-build] (3/5) Install production-only deps into mcpb-build/node_modules/"
 rm -rf mcpb-build-deps

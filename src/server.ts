@@ -29,11 +29,28 @@ import { getHandler, toMcpToolList, TOOLS } from './tools/registry.js';
 const SERVER_NAME = 'local-memory-mcp';
 // Read from package.json instead of a hardcoded literal — the literal sat at
 // 2.3.0 through the 2.4.0 release, so the MCP handshake advertised a stale
-// version to every client. package.json ships in the npm tarball one level
-// above dist/, and the same relative path holds when running from src/.
-const SERVER_VERSION: string = JSON.parse(
-  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf-8'),
-).version;
+// version to every client.
+//
+// The lookup probes TWO locations because the module ships in two layouts:
+// npm tarball / repo have package.json one level above dist|src, the MCPB
+// bundle has the code under server/ with package.json at the bundle root
+// (copied there by build-mcpb.sh) — same '../package.json', but a first
+// 2.4.1 iteration of this read crashed the bundle at import time because the
+// file was not copied. A version string must never be able to kill the boot:
+// on total failure we advertise 0.0.0 and log, instead of throwing.
+const SERVER_VERSION: string = (() => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [join(here, '../package.json'), join(here, 'package.json')]) {
+    try {
+      const version = JSON.parse(readFileSync(candidate, 'utf-8')).version;
+      if (typeof version === 'string' && version.length > 0) return version;
+    } catch {
+      // try the next location
+    }
+  }
+  process.stderr.write('[local-memory] warn: package.json not found next to the module — advertising 0.0.0\n');
+  return '0.0.0';
+})();
 
 const INSTRUCTIONS = `Local Memory — Persistent memory for your AI assistant.
 
