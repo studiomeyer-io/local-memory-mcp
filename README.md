@@ -111,7 +111,7 @@ Always call memory_session_start at the beginning of each conversation and memor
     "SessionStart": [{
       "hooks": [{
         "type": "command",
-        "command": "echo '{\"hookSpecificOutput\":{\"additionalContext\":\"Call memory_session_start now.\"}}'",
+        "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Call memory_session_start now.\"}}'",
         "timeout": 5
       }]
     }]
