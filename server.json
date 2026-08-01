@@ -7,12 +7,12 @@
     "url": "https://github.com/studiomeyer-io/local-memory-mcp",
     "source": "github"
   },
-  "version": "2.3.1",
+  "version": "2.4.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@studiomeyer/local-memory-mcp",
-      "version": "2.3.1",
+      "version": "2.4.0",
       "transport": {
         "type": "stdio"
       },
