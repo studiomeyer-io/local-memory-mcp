@@ -483,7 +483,7 @@ export async function search(input: z.infer<typeof searchSchema>): Promise<ToolR
         ...(tags && tags.length > 0 ? { tags } : {}),
         ...(downgradeReason ? { notice: downgradeReason } : {}),
       },
-      message: `${results.length} Ergebnisse für "${input.query}" (mode: ${effectiveMode}${downgradeReason ? `, requested ${requestedMode}` : ''}).`,
+      message: `${results.length} results for "${input.query}" (mode: ${effectiveMode}${downgradeReason ? `, requested ${requestedMode}` : ''}).`,
     };
   } catch (err) {
     return {

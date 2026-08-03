@@ -301,7 +301,7 @@ export function contradictions(input: z.infer<typeof contradictionsSchema>): Too
     },
     message:
       pairs.length === 0
-        ? 'Keine Widersprüche gefunden.'
-        : `${pairs.length} Widerspruch-Kandidat(en) gefunden.`,
+        ? 'No contradictions found.'
+        : `${pairs.length} contradiction candidate(s) found.`,
   };
 }

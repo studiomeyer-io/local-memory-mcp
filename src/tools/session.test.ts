@@ -159,7 +159,7 @@ describe('sessionStart', () => {
     const result = sessionStart({});
     if (result.success) {
       // The message should still exist but not mention an empty project.
-      expect(result.message).not.toContain('Projekt:');
+      expect(result.message).not.toContain('Project:');
     }
   });
 });
