@@ -9,7 +9,7 @@
  *   - Returns a well-formed empty result (not an error) for a no-hit query.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -477,6 +477,21 @@ describe('search modes (v2.0.0+ hybrid retrieval)', () => {
       const d = r.data as { mode: string; notice?: string };
       expect(d.mode).toBe('fts');
       expect(d.notice).toBeUndefined();
+    }
+  });
+
+  it('reports a failed search in English', async () => {
+    // A store path below a regular file cannot be opened, so the search fails inside its try.
+    const { closeDb } = await import('../db/client.js');
+    closeDb();
+    writeFileSync(join(tmp, 'blocker'), '');
+    process.env.MEMORY_DB_PATH = join(tmp, 'blocker', 'test.sqlite');
+    const { search } = await import('./search.js');
+    const r = await search({ query: 'anything', mode: 'fts' });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.code).toBe('SEARCH_FAILED');
+      expect(r.error).toMatch(/^Search failed: /);
     }
   });
 });

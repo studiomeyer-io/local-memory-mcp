@@ -488,7 +488,7 @@ export async function search(input: z.infer<typeof searchSchema>): Promise<ToolR
   } catch (err) {
     return {
       success: false,
-      error: `Suchfehler: ${err instanceof Error ? err.message : String(err)}`,
+      error: `Search failed: ${err instanceof Error ? err.message : String(err)}`,
       code: 'SEARCH_FAILED',
     };
   }
