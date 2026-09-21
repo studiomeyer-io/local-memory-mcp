@@ -59,7 +59,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
+    "@huggingface/transformers": "^4.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.9.0",
     "sqlite-vec": "^0.1.9",
@@ -75,7 +75,7 @@
   },
   "mcpName": "io.github.studiomeyer-io/local-memory-mcp",
   "overrides": {
-    "sharp": "^0.35.0",
-    "adm-zip": "^0.6.0"
+    "sharp": "^0.35.4",
+    "adm-zip": "^0.6.1"
   }
 }
