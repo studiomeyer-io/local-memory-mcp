@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.4.4] - 2026-09-21
+
+Dependency security release plus one message fix. 251 → **255 tests**. No schema change, no API change.
+
+### Security
+
+- **`sharp` 0.35.3 → 0.35.4** (GHSA-rgj7-g3m4-5g8c, libheif) and **`adm-zip` 0.6.0 → 0.6.1** (GHSA-7q85-xj36-vmfc, memory allocation from the declared uncompressed size; GHSA-vwc7-r8mq-g2x9, symlinks followed on extraction). Both arrive through `@huggingface/transformers`: `sharp` directly, `adm-zip` through the installer of `onnxruntime-node`. The fix is upstream: `@huggingface/transformers` 4.3.0 requires `sharp ^0.35.4` itself and brings `onnxruntime-node` 1.30.0. The `overrides` now carry patched lower bounds (`^0.35.4`, `^0.6.1`); the old open ones (`^0.35.0`, `^0.6.0`) admitted exactly the vulnerable versions, and Dependabot does not touch an override, so its security update for `sharp` failed three times.
+- **The embedding path was checked at runtime, not only by tests.** `embed()` falls back to FTS5 when the model cannot load, so a green suite says nothing about a native-module jump from `onnxruntime-node` 1.24.3 to 1.30.0. Measured against the built server: the model loads, vectors keep 384 dimensions, and embeddings of the same text before and after the update agree to a cosine of 0.9986 to 1.0. Existing databases need no re-embedding.
+
+### Fixed
+
+- **`memory_search` reports failures in English** (`Search failed: ...`) like every other tool. The `Suchfehler` prefix was the last German string left over from #28. Thanks to [@pmario](https://github.com/pmario) ([#42](https://github.com/studiomeyer-io/local-memory-mcp/pull/42)).
+
 ## [2.4.3] — 2026-08-09
 
 Security + correctness release. 239 → **251 tests**. No schema change, no API change.
