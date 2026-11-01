@@ -4,8 +4,7 @@
  *   2. The dispatch table that maps tool name → handler.
  *
  * Each tool has a Zod schema for validation + a handler. We convert Zod to
- * JSON Schema inline via a tiny custom converter (no runtime dep on
- * zod-to-json-schema — we only need the basics for our own schemas).
+ * JSON Schema with the supported Zod converter in input mode.
  */
 import { z } from 'zod';
 import type { ToolResult } from '../lib/types.js';
@@ -213,64 +212,7 @@ export const TOOLS: ToolDef[] = [
 type JsonSchema = Record<string, unknown>;
 
 function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
-  const def = (schema as unknown as { _def: { typeName: string } })._def;
-
-  if (def.typeName === 'ZodObject') {
-    const shape = (schema as z.ZodObject<z.ZodRawShape>).shape;
-    const properties: Record<string, JsonSchema> = {};
-    const required: string[] = [];
-    for (const [key, val] of Object.entries(shape)) {
-      const fieldDef = (val as unknown as { _def: { typeName: string } })._def;
-      const isOptional = fieldDef.typeName === 'ZodOptional' || fieldDef.typeName === 'ZodDefault';
-      properties[key] = zodToJsonSchema(val as z.ZodTypeAny);
-      if (!isOptional) required.push(key);
-    }
-    return {
-      type: 'object',
-      properties,
-      ...(required.length > 0 ? { required } : {}),
-    };
-  }
-
-  if (def.typeName === 'ZodOptional' || def.typeName === 'ZodDefault') {
-    return zodToJsonSchema((schema as unknown as { _def: { innerType: z.ZodTypeAny } })._def.innerType);
-  }
-
-  if (def.typeName === 'ZodString') {
-    const checks = (def as unknown as { checks?: Array<{ kind: string; value?: number }> }).checks ?? [];
-    const result: JsonSchema = { type: 'string' };
-    for (const c of checks) {
-      if (c.kind === 'min' && c.value !== undefined) result.minLength = c.value;
-      if (c.kind === 'max' && c.value !== undefined) result.maxLength = c.value;
-    }
-    return result;
-  }
-
-  if (def.typeName === 'ZodNumber') {
-    const checks = (def as unknown as { checks?: Array<{ kind: string; value?: number }> }).checks ?? [];
-    const result: JsonSchema = { type: 'number' };
-    for (const c of checks) {
-      if (c.kind === 'min' && c.value !== undefined) result.minimum = c.value;
-      if (c.kind === 'max' && c.value !== undefined) result.maximum = c.value;
-      if (c.kind === 'int') result.type = 'integer';
-    }
-    return result;
-  }
-
-  if (def.typeName === 'ZodBoolean') return { type: 'boolean' };
-
-  if (def.typeName === 'ZodArray') {
-    const inner = (schema as unknown as { _def: { type: z.ZodTypeAny } })._def.type;
-    return { type: 'array', items: zodToJsonSchema(inner) };
-  }
-
-  if (def.typeName === 'ZodEnum') {
-    const values = (def as unknown as { values: string[] }).values;
-    return { type: 'string', enum: values };
-  }
-
-  // Fallback — let Claude Desktop show the tool even if the schema is loose
-  return { type: 'object' };
+  return z.toJSONSchema(schema, { target: 'draft-07', io: 'input' });
 }
 
 // ─── MCP tool annotations (2026 spec hints) ─────────
