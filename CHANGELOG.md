@@ -323,6 +323,12 @@ No API breakage. The four newly-registered tools were already callable as import
 
 ## Unreleased
 
+
+### Dependency maintenance
+
+- Migrate the direct Zod dependency to ^4.6.7 and generate draft-07 input schemas with the supported z.toJSONSchema API. Keep tool constraints explicit, including string-keyed import records.
+- Verify all 25 populated tool schemas over the real stdio transport. The checked local suite passes 256 tests; actual SQLite, sqlite-vec, sharp and ONNX operations pass. All-dependency and production audits report zero findings.
+
 ### Performance — push `entityType` filter into FTS5 sub-queries (Session 840, 2026-04-21)
 
 `memory_entity_search` has filtered matches by `entityType` since v1.0.0,

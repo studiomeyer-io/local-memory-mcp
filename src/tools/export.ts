@@ -234,7 +234,7 @@ export function memoryExport(input: z.infer<typeof memoryExportSchema>): ToolRes
 // An envelope could therefore land rows no tool could create — open-string
 // category, confidence 999, 50k of content, and a non-UUID id.
 export const memoryImportSchema = z.object({
-  data: z.record(z.unknown()),
+  data: z.record(z.string(), z.unknown()),
   mode: z.enum(['merge']).optional(), // reserved; only additive merge is supported
 });
 
