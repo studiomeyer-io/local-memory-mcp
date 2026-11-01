@@ -1,8 +1,13 @@
 # Changelog
 
-## [2.4.4] - 2026-09-21
+## [2.4.4] - 2026-11-01
 
-Dependency security release plus one message fix. 251 → **255 tests**. No schema change, no API change.
+Published on 2026-11-01. The security and message changes below were originally documented on 2026-09-21, increasing coverage from 251 to 255 tests. The published build also includes the dependency maintenance below and passes 256 tests. The 25-tool interface and its input constraints are preserved.
+
+### Dependency maintenance
+
+- Migrate the direct Zod dependency to ^4.6.7 and generate draft-07 input schemas with the supported z.toJSONSchema API. Keep tool constraints explicit, including string-keyed import records.
+- Verify all 25 populated tool schemas over the real stdio transport. The checked local suite passes 256 tests; actual SQLite, sqlite-vec, sharp and ONNX operations pass. All-dependency and production audits report zero findings.
 
 ### Security
 
@@ -322,12 +327,6 @@ Trust + adoption polish based on an outside-the-fleet audit (`research/2026-05-2
 No API breakage. The four newly-registered tools were already callable as importable functions; they are now also reachable over MCP.
 
 ## Unreleased
-
-
-### Dependency maintenance
-
-- Migrate the direct Zod dependency to ^4.6.7 and generate draft-07 input schemas with the supported z.toJSONSchema API. Keep tool constraints explicit, including string-keyed import records.
-- Verify all 25 populated tool schemas over the real stdio transport. The checked local suite passes 256 tests; actual SQLite, sqlite-vec, sharp and ONNX operations pass. All-dependency and production audits report zero findings.
 
 ### Performance — push `entityType` filter into FTS5 sub-queries (Session 840, 2026-04-21)
 
